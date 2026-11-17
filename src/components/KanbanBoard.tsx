@@ -1769,10 +1769,11 @@ export default function KanbanBoard({
           </p>
         </div>
 
-        <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-3 flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5">
+        <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-3 flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5 items-start">
           {COLUMNS.map((col) => {
             const columnTasks = filteredTasks.filter((t) => t.status === col.id);
             const isOver = dragOverCol === col.id;
+            const hasMoreThanThree = columnTasks.length > 3;
 
             return (
               <section
@@ -1789,7 +1790,7 @@ export default function KanbanBoard({
                     : 'bg-slate-100/70 border-slate-200/80 dark:bg-neutral-900/50 dark:border-neutral-800/80'
                 }`}
               >
-                <div className="flex items-center justify-between mb-3.5 px-1">
+                <div className="flex items-center justify-between mb-3.5 px-1 shrink-0">
                   <div className="flex items-center gap-2">
                     <span
                       className={`w-2.5 h-2.5 rounded-full ${
@@ -1809,7 +1810,14 @@ export default function KanbanBoard({
                   </span>
                 </div>
 
-                <div className="space-y-3 flex-1">
+                {/* Wadah kartu dibatasi maksimal tinggi 5 kartu & otomatis scroll jika lebih */}
+                <div
+                  className={`space-y-3 flex-1 ${
+                    hasMoreThanThree
+                      ? 'max-h-[840px] overflow-y-auto pr-1.5 overscroll-contain'
+                      : ''
+                  }`}
+                >
                   {columnTasks.map((task) => {
                     const parentTask = task.parent_id
                       ? tasks.find((p) => p.id === task.parent_id) || null
@@ -1855,6 +1863,12 @@ export default function KanbanBoard({
                     </div>
                   )}
                 </div>
+
+                {hasMoreThanThree && (
+                  <div className="mt-2.5 pt-2 border-t border-slate-200/70 dark:border-neutral-800/80 text-center text-[11px] font-medium text-slate-400 dark:text-neutral-500 shrink-0">
+                    Scroll ke bawah untuk melihat {columnTasks.length - 3} tugas lainnya
+                  </div>
+                )}
               </section>
             );
           })}
