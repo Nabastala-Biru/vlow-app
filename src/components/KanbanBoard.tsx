@@ -98,6 +98,20 @@ function getTodayDateString() {
   return formatLocalYMD(new Date());
 }
 
+function isValidStreakCompletion(task: Task): boolean {
+  if (
+    task.horizon !== 'daily' ||
+    (task.status !== 'done' && task.status !== 'archived') ||
+    !task.target_date ||
+    !task.updated_at
+  ) {
+    return false;
+  }
+
+  const completedLocalYMD = formatLocalYMD(new Date(task.updated_at));
+  return completedLocalYMD === task.target_date;
+}
+
 function shiftDateYMD(ymd: string, deltaDays: number): string {
   const d = new Date(`${ymd}T00:00:00`);
   d.setDate(d.getDate() + deltaDays);
@@ -588,12 +602,8 @@ export default function KanbanBoard({
 
     const completedDailyDatesSet = new Set<string>();
     allCombinedTasks.forEach((t) => {
-      if (
-        t.horizon === 'daily' &&
-        (t.status === 'done' || t.status === 'archived') &&
-        t.target_date
-      ) {
-        completedDailyDatesSet.add(t.target_date);
+      if (isValidStreakCompletion(t) && t.target_date! <= today) {
+        completedDailyDatesSet.add(t.target_date!);
       }
     });
 
@@ -819,14 +829,17 @@ export default function KanbanBoard({
     (t) => higherHorizonIds.includes(t.horizon) && t.id !== editingTask?.id
   );
 
-  function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
+function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
     setDragOverCol(null);
     if (!draggedTaskId) return;
     const newPosition = getNowTimestamp();
+    const isoNow = new Date(newPosition).toISOString();
 
     setTasks((prev) =>
       prev.map((t) =>
-        t.id === draggedTaskId ? { ...t, status: targetStatus, position: newPosition } : t
+        t.id === draggedTaskId
+          ? { ...t, status: targetStatus, position: newPosition, updated_at: isoNow }
+          : t
       )
     );
 
@@ -846,9 +859,14 @@ export default function KanbanBoard({
 
     const targetStatus = order[nextIdx];
     const newPosition = getNowTimestamp();
+    const isoNow = new Date(newPosition).toISOString();
 
     setTasks((prev) =>
-      prev.map((t) => (t.id === task.id ? { ...t, status: targetStatus, position: newPosition } : t))
+      prev.map((t) =>
+        t.id === task.id
+          ? { ...t, status: targetStatus, position: newPosition, updated_at: isoNow }
+          : t
+      )
     );
 
     startTransition(async () => {
@@ -861,10 +879,13 @@ export default function KanbanBoard({
     const idx = order.indexOf(subtask.status as Exclude<TaskStatus, 'archived'>);
     const nextStatus = order[(idx + 1) % order.length];
     const newPosition = getNowTimestamp();
+    const isoNow = new Date(newPosition).toISOString();
 
     setTasks((prev) =>
       prev.map((t) =>
-        t.id === subtask.id ? { ...t, status: nextStatus, position: newPosition } : t
+        t.id === subtask.id
+          ? { ...t, status: nextStatus, position: newPosition, updated_at: isoNow }
+          : t
       )
     );
 

@@ -177,12 +177,21 @@ export default function YearlyRecapModal({
     const completedDailyDates = Array.from(
       new Set(
         completedTasks
-          .filter(
-            (t) =>
-              t.horizon === 'daily' &&
-              t.target_date &&
-              t.target_date.startsWith(`${selectedYear}-`)
-          )
+          .filter((t) => {
+            if (
+              t.horizon !== 'daily' ||
+              !t.target_date ||
+              !t.updated_at ||
+              !t.target_date.startsWith(`${selectedYear}-`)
+            ) {
+              return false;
+            }
+            const d = new Date(t.updated_at);
+            const completedLocalYMD = `${d.getFullYear()}-${String(
+              d.getMonth() + 1
+            ).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            return completedLocalYMD === t.target_date;
+          })
           .map((t) => t.target_date!)
       )
     ).sort();
