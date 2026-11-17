@@ -13,7 +13,7 @@ export default function HomePage() {
     <Suspense
       fallback={
         <div className="min-h-screen bg-neutral-950 text-neutral-400 flex items-center justify-center text-sm">
-          Memuat data Vault...
+          Sabar yo boss, iki sek ndelok datamu...
         </div>
       }
     >
