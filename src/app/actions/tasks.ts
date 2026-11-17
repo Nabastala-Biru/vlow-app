@@ -28,7 +28,26 @@ export async function getActiveTasks(): Promise<Task[]> {
     .order('created_at', { ascending: false });
 
   if (error) throw new Error(error.message);
-  return (data as Task[]) || [];
+  return ((data as Task[]) || []).map((t) => ({
+    ...t,
+    target_months: Array.isArray(t.target_months) ? t.target_months : [],
+  }));
+}
+
+export async function getArchivedTasks(): Promise<Task[]> {
+  await requireAuth();
+
+  const { data, error } = await supabaseAdmin
+    .from('tasks')
+    .select('*')
+    .eq('status', 'archived')
+    .order('updated_at', { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return ((data as Task[]) || []).map((t) => ({
+    ...t,
+    target_months: Array.isArray(t.target_months) ? t.target_months : [],
+  }));
 }
 
 export async function createTask(input: {
@@ -37,7 +56,9 @@ export async function createTask(input: {
   horizon: Horizon;
   priority: TaskPriority;
   parent_id?: string | null;
+  start_date?: string | null;
   target_date?: string | null;
+  target_months?: string[];
 }) {
   await requireAuth();
 
@@ -49,7 +70,9 @@ export async function createTask(input: {
     status: 'todo',
     position: Date.now(),
     parent_id: input.parent_id || null,
+    start_date: input.start_date || null,
     target_date: input.target_date || null,
+    target_months: input.target_months || [],
   });
 
   if (error) throw new Error(error.message);
@@ -64,7 +87,9 @@ export async function updateTask(
     horizon: Horizon;
     priority: TaskPriority;
     parent_id?: string | null;
+    start_date?: string | null;
     target_date?: string | null;
+    target_months?: string[];
   }
 ) {
   await requireAuth();
@@ -77,10 +102,27 @@ export async function updateTask(
       horizon: input.horizon,
       priority: input.priority,
       parent_id: input.parent_id || null,
+      start_date: input.start_date || null,
       target_date: input.target_date || null,
+      target_months: input.target_months || [],
       updated_at: new Date().toISOString(),
     })
     .eq('id', id);
+
+  if (error) throw new Error(error.message);
+  revalidatePath('/');
+}
+
+export async function linkChildTask(childTaskId: string, parentTaskId: string | null) {
+  await requireAuth();
+
+  const { error } = await supabaseAdmin
+    .from('tasks')
+    .update({
+      parent_id: parentTaskId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', childTaskId);
 
   if (error) throw new Error(error.message);
   revalidatePath('/');
@@ -121,6 +163,40 @@ export async function archiveCompletedInHorizon(horizon: Horizon) {
 
   if (error) throw new Error(error.message);
   revalidatePath('/');
+}
+
+export async function restoreArchivedTask(
+  id: string,
+  targetStatus: Exclude<TaskStatus, 'archived'> = 'done'
+) {
+  await requireAuth();
+
+  const { error } = await supabaseAdmin
+    .from('tasks')
+    .update({
+      status: targetStatus,
+      position: Date.now(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+
+  if (error) throw new Error(error.message);
+  revalidatePath('/');
+}
+
+export async function getAllTasksForAnalytics(): Promise<Task[]> {
+  await requireAuth();
+
+  const { data, error } = await supabaseAdmin
+    .from('tasks')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return ((data as Task[]) || []).map((t) => ({
+    ...t,
+    target_months: Array.isArray(t.target_months) ? t.target_months : [],
+  }));
 }
 
 export async function lockVault() {

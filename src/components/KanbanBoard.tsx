@@ -1,15 +1,20 @@
 'use client';
 
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import {
   Plus,
   Trash2,
   Lock,
   Archive,
+  ArchiveRestore,
+  RotateCcw,
   Calendar,
   Link2,
+  Unlink,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
+  ChevronUp,
   CheckCircle2,
   Circle,
   Clock,
@@ -32,6 +37,10 @@ import {
   Target,
   Compass,
   Flag,
+  ArrowRight,
+  ArrowLeft,
+  Flame,
+  Sparkles,
 } from 'lucide-react';
 import {
   CHILD_HORIZON_MAP,
@@ -41,13 +50,20 @@ import {
   Task,
   TaskPriority,
   TaskStatus,
+  formatDateID,
+  formatMonthYearID,
+  getMonthDetailBounds,
+  getMonthlyEffectiveRange,
 } from '@/types/task';
 import {
   archiveCompletedInHorizon,
   createTask,
   deleteTask,
+  getArchivedTasks,
+  linkChildTask,
   lockVault,
   moveTask,
+  restoreArchivedTask,
   updateTask,
 } from '@/app/actions/tasks';
 import {
@@ -55,6 +71,13 @@ import {
   disableShareLink,
   generateOrRotateShareLink,
 } from '@/app/actions/share';
+import {
+  CustomDatePicker,
+  CustomMonthPicker,
+  CustomSelect,
+  SelectOption,
+} from '@/components/VaultPickers';
+import YearlyRecapModal from '@/components/YearlyRecapModal';
 
 function getNowTimestamp() {
   return Date.now();
@@ -64,13 +87,31 @@ function generateTempId() {
   return crypto.randomUUID();
 }
 
-function getTodayDateString() {
-  const d = new Date();
+function formatLocalYMD(d: Date): string {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
+
+function getTodayDateString() {
+  return formatLocalYMD(new Date());
+}
+
+function shiftDateYMD(ymd: string, deltaDays: number): string {
+  const d = new Date(`${ymd}T00:00:00`);
+  d.setDate(d.getDate() + deltaDays);
+  return formatLocalYMD(d);
+}
+
+function getCurrentMonthString() {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+const MULTI_MONTH_HORIZONS: Horizon[] = ['quarterly', 'biannual', 'yearly'];
 
 const HORIZON_ICONS: Record<Horizon, React.ComponentType<{ className?: string }>> = {
   daily: CalendarDays,
@@ -105,11 +146,309 @@ const PRIORITY_META: Record<
   },
 };
 
+const PRIORITY_FILTER_OPTIONS: SelectOption[] = [
+  { value: 'all', label: 'Semua Prioritas' },
+  { value: 'high', label: 'Prioritas: High', dotClass: 'bg-rose-500' },
+  { value: 'medium', label: 'Prioritas: Medium', dotClass: 'bg-sky-500' },
+  { value: 'low', label: 'Prioritas: Low', dotClass: 'bg-slate-400' },
+];
+
+const FORM_PRIORITY_OPTIONS: SelectOption[] = [
+  { value: 'low', label: 'Low (Santai)', dotClass: 'bg-slate-400' },
+  { value: 'medium', label: 'Medium (Normal)', dotClass: 'bg-sky-500' },
+  { value: 'high', label: 'High (Penting)', dotClass: 'bg-rose-500' },
+];
+
+const SUBTASK_PRIORITY_OPTIONS: SelectOption[] = [
+  { value: 'low', label: 'Low', dotClass: 'bg-slate-400' },
+  { value: 'medium', label: 'Med', dotClass: 'bg-sky-500' },
+  { value: 'high', label: 'High', dotClass: 'bg-rose-500' },
+];
+
+const SHORT_DAY_NAMES_ID = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+
+const NEXT_STATUS_LABEL: Record<Exclude<TaskStatus, 'archived'>, string | null> = {
+  todo: 'In Progress',
+  in_progress: 'Done',
+  done: null,
+};
+
+const PREV_STATUS_LABEL: Record<Exclude<TaskStatus, 'archived'>, string | null> = {
+  todo: null,
+  in_progress: 'To Do',
+  done: 'In Progress',
+};
+
+interface SwipeableTaskCardProps {
+  task: Task;
+  colId: Exclude<TaskStatus, 'archived'>;
+  parentTask: Task | null;
+  childCount: number;
+  completedChildren: number;
+  scheduleBadge: React.ReactNode;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onOpenDetail: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onMovePrev: () => void;
+  onMoveNext: () => void;
+}
+
+function SwipeableTaskCard({
+  task,
+  colId,
+  parentTask,
+  childCount,
+  completedChildren,
+  scheduleBadge,
+  onDragStart,
+  onDragEnd,
+  onOpenDetail,
+  onEdit,
+  onDelete,
+  onMovePrev,
+  onMoveNext,
+}: SwipeableTaskCardProps) {
+  const [offsetX, setOffsetX] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+  const isHorizontalLock = useRef<boolean | null>(null);
+  const didSwipeRef = useRef(false);
+
+  const SWIPE_THRESHOLD = 68;
+  const MAX_OFFSET = 115;
+
+  const canSwipeRight = colId !== 'done';
+  const canSwipeLeft = colId !== 'todo';
+  const prio = PRIORITY_META[task.priority || 'medium'];
+
+  function handleTouchStart(e: React.TouchEvent) {
+    if (e.touches.length !== 1) return;
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+    isHorizontalLock.current = null;
+    didSwipeRef.current = false;
+  }
+
+  function handleTouchMove(e: React.TouchEvent) {
+    if (touchStartX.current === null || touchStartY.current === null) return;
+
+    const currentX = e.touches[0].clientX;
+    const currentY = e.touches[0].clientY;
+    const deltaX = currentX - touchStartX.current;
+    const deltaY = currentY - touchStartY.current;
+
+    if (isHorizontalLock.current === null) {
+      if (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10) {
+        isHorizontalLock.current = Math.abs(deltaX) > Math.abs(deltaY);
+      }
+    }
+
+    if (!isHorizontalLock.current) return;
+
+    didSwipeRef.current = true;
+    setIsSwiping(true);
+
+    let clamped = deltaX;
+    if (deltaX > 0 && !canSwipeRight) {
+      clamped = Math.min(deltaX * 0.2, 24);
+    } else if (deltaX < 0 && !canSwipeLeft) {
+      clamped = Math.max(deltaX * 0.2, -24);
+    } else {
+      clamped = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, deltaX));
+    }
+
+    setOffsetX(clamped);
+  }
+
+  function handleTouchEnd() {
+    if (isHorizontalLock.current) {
+      if (offsetX >= SWIPE_THRESHOLD && canSwipeRight) {
+        onMoveNext();
+      } else if (offsetX <= -SWIPE_THRESHOLD && canSwipeLeft) {
+        onMovePrev();
+      }
+    }
+
+    touchStartX.current = null;
+    touchStartY.current = null;
+    isHorizontalLock.current = null;
+    setIsSwiping(false);
+    setOffsetX(0);
+  }
+
+  function handleCardClick() {
+    if (didSwipeRef.current) {
+      didSwipeRef.current = false;
+      return;
+    }
+    onOpenDetail();
+  }
+
+  const rightTargetLabel = NEXT_STATUS_LABEL[colId];
+  const leftTargetLabel = PREV_STATUS_LABEL[colId];
+  const isRightReady = offsetX >= SWIPE_THRESHOLD && canSwipeRight;
+  const isLeftReady = offsetX <= -SWIPE_THRESHOLD && canSwipeLeft;
+
+  return (
+    <div className="relative rounded-xl overflow-hidden select-none md:select-auto">
+      {/* Background Indikator Geser Mobile */}
+      <div
+        className={`md:hidden absolute inset-0 rounded-xl flex items-center justify-between px-4 transition-colors ${
+          offsetX > 12 && canSwipeRight
+            ? isRightReady
+              ? colId === 'in_progress'
+                ? 'bg-emerald-500 text-white'
+                : 'bg-amber-500 text-white'
+              : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+            : offsetX < -12 && canSwipeLeft
+            ? isLeftReady
+              ? 'bg-slate-700 text-white dark:bg-neutral-700'
+              : 'bg-slate-500/15 text-slate-700 dark:text-neutral-300'
+            : 'bg-transparent pointer-events-none'
+        }`}
+      >
+        <div
+          className={`flex items-center gap-1.5 text-xs font-bold transition-opacity ${
+            offsetX > 12 && canSwipeRight ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <ArrowRight className="w-4 h-4" />
+          <span>{rightTargetLabel}</span>
+        </div>
+
+        <div
+          className={`flex items-center gap-1.5 text-xs font-bold transition-opacity ${
+            offsetX < -12 && canSwipeLeft ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <span>{leftTargetLabel}</span>
+          <ArrowLeft className="w-4 h-4" />
+        </div>
+      </div>
+
+      {/* Kartu Utama */}
+      <div
+        draggable
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onClick={handleCardClick}
+        style={{
+          transform: offsetX !== 0 ? `translateX(${offsetX}px)` : undefined,
+          transition: isSwiping ? 'none' : 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1)',
+        }}
+        className="relative group bg-white hover:bg-slate-50/90 dark:bg-neutral-900 dark:hover:bg-neutral-800/90 border border-slate-200/90 hover:border-emerald-400/60 dark:border-neutral-800 dark:hover:border-emerald-600/50 rounded-xl p-3.5 shadow-xs hover:shadow-md cursor-pointer"
+      >
+        <div className="flex flex-wrap items-center gap-1.5 mb-2">
+          <span
+            className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md border ${prio.badgeClass}`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${prio.dotClass}`} />
+            {prio.label}
+          </span>
+
+          {parentTask && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/50 dark:border-emerald-800/60 px-2 py-0.5 rounded-md max-w-[180px]">
+              <Link2 className="w-2.5 h-2.5 shrink-0" />
+              <span className="truncate">{parentTask.title}</span>
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-start justify-between gap-2">
+          <h3
+            className={`text-sm font-semibold leading-snug group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors ${
+              task.status === 'done'
+                ? 'line-through text-slate-400 dark:text-neutral-500'
+                : 'text-slate-800 dark:text-neutral-100'
+            }`}
+          >
+            {task.title}
+          </h3>
+
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
+          >
+            <button
+              onClick={onEdit}
+              className="text-slate-400 hover:text-slate-700 dark:text-neutral-500 dark:hover:text-neutral-200 p-1 rounded cursor-pointer"
+              title="Edit tugas"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={onDelete}
+              className="text-slate-400 hover:text-rose-600 dark:text-neutral-500 dark:hover:text-rose-400 p-1 rounded cursor-pointer"
+              title="Hapus tugas"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {task.description && (
+          <p className="text-xs text-slate-500 dark:text-neutral-400 mt-1.5 line-clamp-2 leading-relaxed">
+            {task.description}
+          </p>
+        )}
+
+        {childCount > 0 && (
+          <div className="mt-2.5 flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200/70 dark:border-indigo-900/50 px-2 py-1 rounded-lg w-fit">
+            <Layers className="w-3 h-3" />
+            <span>
+              {completedChildren}/{childCount} sub-tugas selesai
+            </span>
+          </div>
+        )}
+
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="mt-3 pt-2.5 border-t border-slate-100 dark:border-neutral-800/80 flex items-center justify-between text-[11px] gap-2"
+        >
+          <div className="flex items-center gap-1.5 min-w-0 truncate">{scheduleBadge}</div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            {colId !== 'todo' && (
+              <button
+                onClick={onMovePrev}
+                className="p-1.5 md:p-1 hover:bg-slate-100 dark:hover:bg-neutral-700 rounded text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white cursor-pointer"
+                title="Geser ke kiri"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {colId !== 'done' ? (
+              <button
+                onClick={onMoveNext}
+                className="p-1.5 md:p-1 hover:bg-slate-100 dark:hover:bg-neutral-700 rounded text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white cursor-pointer"
+                title="Geser ke kanan"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            ) : (
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function KanbanBoard({
   initialTasks,
+  initialAllTasks,
   initialShareConfig,
 }: {
   initialTasks: Task[];
+  initialAllTasks?: Task[];
   initialShareConfig: ShareConfig;
 }) {
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
@@ -130,10 +469,32 @@ export default function KanbanBoard({
   const [copied, setCopied] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
 
+  // Archive & Analytics state
+  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
+  const [archivedTasks, setArchivedTasks] = useState<Task[]>(() =>
+    initialAllTasks ? initialAllTasks.filter((t) => t.status === 'archived') : []
+  );
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveSearch, setArchiveSearch] = useState('');
+  const [archiveHorizonFilter, setArchiveHorizonFilter] = useState<'all' | Horizon>('all');
+
+  // Yearly Recap Modal state
+  const [isRecapModalOpen, setIsRecapModalOpen] = useState(false);
+
+  // Detail Modal & Subtask state
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
+  const [showMonthDetails, setShowMonthDetails] = useState(false);
+  const [subtaskMode, setSubtaskMode] = useState<'pick' | 'create'>('pick');
+  const [selectedExistingChildId, setSelectedExistingChildId] = useState('');
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [newSubtaskPriority, setNewSubtaskPriority] = useState<TaskPriority>('medium');
+  const [newSubtaskStartDate, setNewSubtaskStartDate] = useState('');
+  const [newSubtaskTargetDate, setNewSubtaskTargetDate] = useState('');
+  const [newSubtaskMonths, setNewSubtaskMonths] = useState<string[]>([]);
+  const [subtaskMonthPicker, setSubtaskMonthPicker] = useState(getCurrentMonthString());
+  const [subtaskError, setSubtaskError] = useState('');
 
+  // Create / Edit Modal state
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [title, setTitle] = useState('');
@@ -141,7 +502,20 @@ export default function KanbanBoard({
   const [formHorizon, setFormHorizon] = useState<Horizon>('daily');
   const [priority, setPriority] = useState<TaskPriority>('medium');
   const [parentId, setParentId] = useState('');
+  const [startDate, setStartDate] = useState('');
   const [targetDate, setTargetDate] = useState('');
+  const [targetMonths, setTargetMonths] = useState<string[]>([]);
+  const [monthPicker, setMonthPicker] = useState(getCurrentMonthString());
+  const [formError, setFormError] = useState('');
+
+  // Fallback: jika initialAllTasks tidak dikirim dari page.tsx, ambil arsip di latar belakang
+  useEffect(() => {
+    if (!initialAllTasks) {
+      getArchivedTasks()
+        .then((data) => setArchivedTasks(data))
+        .catch(() => {});
+    }
+  }, [initialAllTasks]);
 
   useEffect(() => {
     const saved = localStorage.getItem('vault_theme');
@@ -169,11 +543,22 @@ export default function KanbanBoard({
         setDetailTaskId(null);
         setIsFormModalOpen(false);
         setIsShareModalOpen(false);
+        setIsArchiveModalOpen(false);
+        setIsRecapModalOpen(false);
         setMobileMenuOpen(false);
         return;
       }
 
-      if (isTyping || isFormModalOpen || isShareModalOpen || detailTaskId) return;
+      if (
+        isTyping ||
+        isFormModalOpen ||
+        isShareModalOpen ||
+        isArchiveModalOpen ||
+        isRecapModalOpen ||
+        detailTaskId
+      ) {
+        return;
+      }
 
       if (e.key.toLowerCase() === 'n') {
         e.preventDefault();
@@ -187,6 +572,75 @@ export default function KanbanBoard({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   });
+
+  // Gabungan semua tugas (aktif + arsip) untuk Streak & Rekap Tahunan
+  const allCombinedTasks = useMemo(() => {
+    const map = new Map<string, Task>();
+    archivedTasks.forEach((t) => map.set(t.id, t));
+    tasks.forEach((t) => map.set(t.id, t));
+    return Array.from(map.values());
+  }, [tasks, archivedTasks]);
+
+  // Perhitungan Daily Streak (Opsi A: minimal 1 tugas harian selesai pada hari itu)
+  const streakStats = useMemo(() => {
+    const today = getTodayDateString();
+    const yesterday = shiftDateYMD(today, -1);
+
+    const completedDailyDatesSet = new Set<string>();
+    allCombinedTasks.forEach((t) => {
+      if (
+        t.horizon === 'daily' &&
+        (t.status === 'done' || t.status === 'archived') &&
+        t.target_date
+      ) {
+        completedDailyDatesSet.add(t.target_date);
+      }
+    });
+
+    const todayDone = completedDailyDatesSet.has(today);
+
+    // Hitung current streak
+    let currentStreak = 0;
+    let cursor = todayDone ? today : completedDailyDatesSet.has(yesterday) ? yesterday : null;
+    while (cursor && completedDailyDatesSet.has(cursor)) {
+      currentStreak += 1;
+      cursor = shiftDateYMD(cursor, -1);
+    }
+
+    // Hitung best streak sepanjang masa
+    const sortedDates = Array.from(completedDailyDatesSet).sort();
+    let bestStreak = 0;
+    let tempStreak = 0;
+    for (let i = 0; i < sortedDates.length; i++) {
+      if (i === 0) {
+        tempStreak = 1;
+      } else {
+        const expectedPrev = shiftDateYMD(sortedDates[i], -1);
+        tempStreak = sortedDates[i - 1] === expectedPrev ? tempStreak + 1 : 1;
+      }
+      if (tempStreak > bestStreak) bestStreak = tempStreak;
+    }
+
+    // 7 hari terakhir (6 hari lalu s/d hari ini)
+    const last7Days = Array.from({ length: 7 }, (_, idx) => {
+      const dateStr = shiftDateYMD(today, idx - 6);
+      const dObj = new Date(`${dateStr}T00:00:00`);
+      return {
+        dateStr,
+        dayShort: SHORT_DAY_NAMES_ID[dObj.getDay()],
+        dayNum: dObj.getDate(),
+        isCompleted: completedDailyDatesSet.has(dateStr),
+        isToday: dateStr === today,
+      };
+    });
+
+    return {
+      currentStreak,
+      bestStreak,
+      todayDone,
+      last7Days,
+    };
+  }, [allCombinedTasks]);
 
   const shareUrl =
     typeof window !== 'undefined' && shareConfig.share_token
@@ -220,14 +674,59 @@ export default function KanbanBoard({
     setTimeout(() => setCopied(false), 2000);
   }
 
+  async function openArchiveModal() {
+    setMobileMenuOpen(false);
+    setArchiveSearch('');
+    setArchiveHorizonFilter('all');
+    setIsArchiveModalOpen(true);
+    setArchiveLoading(true);
+    try {
+      const data = await getArchivedTasks();
+      setArchivedTasks(data);
+    } finally {
+      setArchiveLoading(false);
+    }
+  }
+
+  function handleRestoreTask(
+    task: Task,
+    targetStatus: Exclude<TaskStatus, 'archived'> = 'done'
+  ) {
+    const newPosition = getNowTimestamp();
+    const isoNow = new Date(newPosition).toISOString();
+
+    setArchivedTasks((prev) => prev.filter((t) => t.id !== task.id));
+    setTasks((prev) => [
+      { ...task, status: targetStatus, position: newPosition, updated_at: isoNow },
+      ...prev,
+    ]);
+
+    startTransition(async () => {
+      await restoreArchivedTask(task.id, targetStatus);
+    });
+  }
+
+  function handleDeleteArchivedPermanently(id: string) {
+    setArchivedTasks((prev) => prev.filter((t) => t.id !== id));
+    startTransition(async () => {
+      await deleteTask(id);
+    });
+  }
+
   function openCreateModal() {
+    const today = getTodayDateString();
+    const currentMonth = getCurrentMonthString();
     setEditingTask(null);
     setTitle('');
     setDescription('');
     setFormHorizon(activeHorizon);
     setPriority('medium');
     setParentId('');
-    setTargetDate('');
+    setStartDate(activeHorizon === 'weekly' ? today : '');
+    setTargetDate(activeHorizon === 'daily' || activeHorizon === 'weekly' ? today : '');
+    setTargetMonths(MULTI_MONTH_HORIZONS.includes(activeHorizon) ? [currentMonth] : []);
+    setMonthPicker(currentMonth);
+    setFormError('');
     setIsFormModalOpen(true);
   }
 
@@ -239,14 +738,54 @@ export default function KanbanBoard({
     setFormHorizon(task.horizon);
     setPriority(task.priority || 'medium');
     setParentId(task.parent_id || '');
+    setStartDate(task.start_date || '');
     setTargetDate(task.target_date || '');
+    setTargetMonths(task.target_months || []);
+    setMonthPicker(getCurrentMonthString());
+    setFormError('');
     setIsFormModalOpen(true);
   }
 
   function openDetailModal(task: Task) {
+    const today = getTodayDateString();
+    const currentMonth = getCurrentMonthString();
+    const childHorizon = CHILD_HORIZON_MAP[task.horizon];
+
+    setShowMonthDetails(false);
+    setSubtaskMode('pick');
+    setSelectedExistingChildId('');
     setNewSubtaskTitle('');
     setNewSubtaskPriority('medium');
+    setNewSubtaskStartDate(childHorizon === 'weekly' ? today : '');
+    setNewSubtaskTargetDate(childHorizon === 'daily' || childHorizon === 'weekly' ? today : '');
+    setNewSubtaskMonths(
+      childHorizon && MULTI_MONTH_HORIZONS.includes(childHorizon) ? [currentMonth] : []
+    );
+    setSubtaskMonthPicker(currentMonth);
+    setSubtaskError('');
     setDetailTaskId(task.id);
+  }
+
+  function handleAddMonthToForm() {
+    if (!monthPicker) return;
+    if (!targetMonths.includes(monthPicker)) {
+      setTargetMonths((prev) => [...prev, monthPicker].sort());
+    }
+  }
+
+  function handleRemoveMonthFromForm(ym: string) {
+    setTargetMonths((prev) => prev.filter((m) => m !== ym));
+  }
+
+  function handleAddMonthToSubtask() {
+    if (!subtaskMonthPicker) return;
+    if (!newSubtaskMonths.includes(subtaskMonthPicker)) {
+      setNewSubtaskMonths((prev) => [...prev, subtaskMonthPicker].sort());
+    }
+  }
+
+  function handleRemoveMonthFromSubtask(ym: string) {
+    setNewSubtaskMonths((prev) => prev.filter((m) => m !== ym));
   }
 
   const activeHorizonMeta = HORIZONS.find((h) => h.id === activeHorizon)!;
@@ -262,6 +801,16 @@ export default function KanbanBoard({
       (t.description && t.description.toLowerCase().includes(searchQuery.toLowerCase()));
     const matchesPriority = priorityFilter === 'all' || (t.priority || 'medium') === priorityFilter;
     return matchesSearch && matchesPriority;
+  });
+
+  const filteredArchivedTasks = archivedTasks.filter((t) => {
+    const matchesHorizon =
+      archiveHorizonFilter === 'all' || t.horizon === archiveHorizonFilter;
+    const matchesSearch =
+      !archiveSearch.trim() ||
+      t.title.toLowerCase().includes(archiveSearch.toLowerCase()) ||
+      (t.description && t.description.toLowerCase().includes(archiveSearch.toLowerCase()));
+    return matchesHorizon && matchesSearch;
   });
 
   const modalHorizonIndex = HORIZONS.findIndex((h) => h.id === formHorizon);
@@ -324,12 +873,73 @@ export default function KanbanBoard({
     });
   }
 
+  function handleAttachExistingChild(e: React.FormEvent, parentTask: Task) {
+    e.preventDefault();
+    setSubtaskError('');
+    if (!selectedExistingChildId) return;
+
+    const isoNow = new Date().toISOString();
+    const targetChildId = selectedExistingChildId;
+
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === targetChildId ? { ...t, parent_id: parentTask.id, updated_at: isoNow } : t
+      )
+    );
+    setSelectedExistingChildId('');
+
+    startTransition(async () => {
+      await linkChildTask(targetChildId, parentTask.id);
+    });
+  }
+
+  function handleDetachChild(childTaskId: string) {
+    const isoNow = new Date().toISOString();
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === childTaskId ? { ...t, parent_id: null, updated_at: isoNow } : t
+      )
+    );
+
+    startTransition(async () => {
+      await linkChildTask(childTaskId, null);
+    });
+  }
+
   function handleAddSubtask(e: React.FormEvent, parentTask: Task, childHorizon: Horizon) {
     e.preventDefault();
+    setSubtaskError('');
+
     if (!newSubtaskTitle.trim()) return;
+
+    if (childHorizon === 'daily' && !newSubtaskTargetDate) {
+      setSubtaskError('Tanggal tugas harian wajib diisi.');
+      return;
+    }
+
+    if (childHorizon === 'weekly') {
+      if (!newSubtaskStartDate || !newSubtaskTargetDate) {
+        setSubtaskError('Tanggal mulai dan tanggal akhir mingguan wajib diisi.');
+        return;
+      }
+      if (newSubtaskTargetDate < newSubtaskStartDate) {
+        setSubtaskError('Tanggal akhir tidak boleh lebih awal dari tanggal mulai.');
+        return;
+      }
+    }
+
+    if (MULTI_MONTH_HORIZONS.includes(childHorizon) && newSubtaskMonths.length === 0) {
+      setSubtaskError('Pilih minimal satu bulan.');
+      return;
+    }
 
     const now = getNowTimestamp();
     const isoNow = new Date(now).toISOString();
+
+    const cleanStart = childHorizon === 'weekly' ? newSubtaskStartDate : null;
+    const cleanTarget =
+      childHorizon === 'daily' || childHorizon === 'weekly' ? newSubtaskTargetDate : null;
+    const cleanMonths = MULTI_MONTH_HORIZONS.includes(childHorizon) ? newSubtaskMonths : [];
 
     const optimisticSubtask: Task = {
       id: generateTempId(),
@@ -340,7 +950,9 @@ export default function KanbanBoard({
       status: 'todo',
       position: now,
       parent_id: parentTask.id,
-      target_date: null,
+      start_date: cleanStart,
+      target_date: cleanTarget,
+      target_months: cleanMonths,
       created_at: isoNow,
       updated_at: isoNow,
     };
@@ -355,16 +967,47 @@ export default function KanbanBoard({
         horizon: childHorizon,
         priority: optimisticSubtask.priority,
         parent_id: parentTask.id,
+        start_date: cleanStart,
+        target_date: cleanTarget,
+        target_months: cleanMonths,
       });
     });
   }
 
   function handleSaveTask(e: React.FormEvent) {
     e.preventDefault();
+    setFormError('');
+
     if (!title.trim()) return;
+
+    if (formHorizon === 'daily' && !targetDate) {
+      setFormError('Tanggal untuk tugas harian wajib diisi.');
+      return;
+    }
+
+    if (formHorizon === 'weekly') {
+      if (!startDate || !targetDate) {
+        setFormError('Tanggal awal dan tanggal akhir untuk tugas mingguan wajib diisi.');
+        return;
+      }
+      if (targetDate < startDate) {
+        setFormError('Tanggal akhir tidak boleh lebih awal dari tanggal awal.');
+        return;
+      }
+    }
+
+    if (MULTI_MONTH_HORIZONS.includes(formHorizon) && targetMonths.length === 0) {
+      setFormError('Tambahkan minimal 1 bulan target.');
+      return;
+    }
 
     const now = getNowTimestamp();
     const isoNow = new Date(now).toISOString();
+
+    const cleanStartDate = formHorizon === 'weekly' ? startDate : null;
+    const cleanTargetDate =
+      formHorizon === 'daily' || formHorizon === 'weekly' ? targetDate : null;
+    const cleanTargetMonths = MULTI_MONTH_HORIZONS.includes(formHorizon) ? targetMonths : [];
 
     if (editingTask) {
       const updatedFields = {
@@ -373,7 +1016,9 @@ export default function KanbanBoard({
         horizon: formHorizon,
         priority,
         parent_id: parentId || null,
-        target_date: targetDate || null,
+        start_date: cleanStartDate,
+        target_date: cleanTargetDate,
+        target_months: cleanTargetMonths,
       };
 
       setTasks((prev) =>
@@ -397,7 +1042,9 @@ export default function KanbanBoard({
         status: 'todo',
         position: now,
         parent_id: parentId || null,
-        target_date: targetDate || null,
+        start_date: cleanStartDate,
+        target_date: cleanTargetDate,
+        target_months: cleanTargetMonths,
         created_at: isoNow,
         updated_at: isoNow,
       };
@@ -413,7 +1060,9 @@ export default function KanbanBoard({
           horizon: formHorizon,
           priority,
           parent_id: optimisticTask.parent_id,
-          target_date: optimisticTask.target_date,
+          start_date: cleanStartDate,
+          target_date: cleanTargetDate,
+          target_months: cleanTargetMonths,
         });
       });
     }
@@ -422,6 +1071,7 @@ export default function KanbanBoard({
   function handleDelete(id: string) {
     if (detailTaskId === id) setDetailTaskId(null);
     setTasks((prev) => prev.filter((t) => t.id !== id));
+    setArchivedTasks((prev) => prev.filter((t) => t.id !== id));
     startTransition(async () => {
       await deleteTask(id);
     });
@@ -429,7 +1079,14 @@ export default function KanbanBoard({
 
   function handleArchiveDone() {
     if (doneCount === 0) return;
+    const isoNow = new Date().toISOString();
+    const toArchive = tasks
+      .filter((t) => t.horizon === activeHorizon && t.status === 'done')
+      .map((t) => ({ ...t, status: 'archived' as const, updated_at: isoNow }));
+
     setTasks((prev) => prev.filter((t) => !(t.horizon === activeHorizon && t.status === 'done')));
+    setArchivedTasks((prev) => [...toArchive, ...prev]);
+
     startTransition(async () => {
       await archiveCompletedInHorizon(activeHorizon);
     });
@@ -443,9 +1100,172 @@ export default function KanbanBoard({
     : null;
   const detailSubtasks = detailTask ? tasks.filter((t) => t.parent_id === detailTask.id) : [];
 
+  const availableChildCandidates =
+    detailTask && detailChildHorizon
+      ? tasks.filter(
+          (t) => t.horizon === detailChildHorizon && t.parent_id !== detailTask.id
+        )
+      : [];
+
+  const detailMonthlyRange =
+    detailTask && detailTask.horizon === 'monthly'
+      ? getMonthlyEffectiveRange(detailTask, tasks)
+      : null;
+
+  const editingMonthlyPreview =
+    editingTask && formHorizon === 'monthly'
+      ? getMonthlyEffectiveRange(editingTask, tasks)
+      : null;
+
+  function formatOptionSchedule(task: Task): string {
+    if (task.horizon === 'daily' && task.target_date) {
+      return formatDateID(task.target_date);
+    }
+    if (task.horizon === 'weekly' && task.start_date && task.target_date) {
+      return `${formatDateID(task.start_date)} s/d ${formatDateID(task.target_date)}`;
+    }
+    if (task.horizon === 'monthly') {
+      const range = getMonthlyEffectiveRange(task, tasks);
+      if (range) {
+        return `${formatDateID(range.start)} s/d ${formatDateID(range.end)}`;
+      }
+    }
+    if (MULTI_MONTH_HORIZONS.includes(task.horizon) && task.target_months?.length > 0) {
+      return task.target_months.map(formatMonthYearID).join(', ');
+    }
+    return '';
+  }
+
+  const archiveHorizonOptions: SelectOption[] = [
+    { value: 'all', label: 'Semua Horizon' },
+    ...HORIZONS.map((h) => ({ value: h.id, label: h.label })),
+  ];
+
+  const formHorizonOptions: SelectOption[] = HORIZONS.map((h) => ({
+    value: h.id,
+    label: h.label,
+  }));
+
+  const parentCandidateOptions: SelectOption[] = [
+    { value: '', label: 'Tidak ditautkan' },
+    ...parentCandidates.map((p) => ({
+      value: p.id,
+      label: `[${HORIZONS.find((h) => h.id === p.horizon)?.shortLabel}] ${p.title}`,
+      sublabel: formatOptionSchedule(p) || undefined,
+    })),
+  ];
+
+  const childCandidateOptions: SelectOption[] = detailChildHorizonMeta
+    ? [
+        {
+          value: '',
+          label:
+            availableChildCandidates.length > 0
+              ? `Pilih tugas ${detailChildHorizonMeta.label.toLowerCase()} (${availableChildCandidates.length})`
+              : `Tidak ada tugas ${detailChildHorizonMeta.label.toLowerCase()} tersedia`,
+          disabled: availableChildCandidates.length === 0,
+        },
+        ...availableChildCandidates.map((cand) => {
+          const existingParent = cand.parent_id
+            ? tasks.find((p) => p.id === cand.parent_id)
+            : null;
+          const schedule = formatOptionSchedule(cand);
+          const subParts = [
+            schedule,
+            existingParent ? `Saat ini di: ${existingParent.title}` : '',
+          ].filter(Boolean);
+
+          return {
+            value: cand.id,
+            label: cand.title,
+            sublabel: subParts.length > 0 ? subParts.join(' • ') : undefined,
+            dotClass: PRIORITY_META[cand.priority || 'medium'].dotClass,
+          };
+        }),
+      ]
+    : [];
+
+  function renderTaskScheduleBadge(task: Task) {
+    if (task.horizon === 'daily' && task.target_date) {
+      const isOverdue = task.target_date < todayStr && task.status !== 'done';
+      const isDueToday = task.target_date === todayStr && task.status !== 'done';
+
+      return (
+        <span
+          className={`inline-flex items-center gap-1 font-medium px-1.5 py-0.5 rounded ${
+            isOverdue
+              ? 'text-rose-600 bg-rose-50 dark:text-rose-400 dark:bg-rose-950/50'
+              : isDueToday
+              ? 'text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/50'
+              : 'text-slate-500 dark:text-neutral-400'
+          }`}
+        >
+          {isOverdue ? <AlertCircle className="w-3 h-3" /> : <Calendar className="w-3 h-3" />}
+          <span>{isDueToday ? 'Hari ini' : formatDateID(task.target_date)}</span>
+        </span>
+      );
+    }
+
+    if (task.horizon === 'weekly' && task.start_date && task.target_date) {
+      const isOverdue = task.target_date < todayStr && task.status !== 'done';
+      return (
+        <span
+          className={`inline-flex items-center gap-1 font-medium px-1.5 py-0.5 rounded ${
+            isOverdue
+              ? 'text-rose-600 bg-rose-50 dark:text-rose-400 dark:bg-rose-950/50'
+              : 'text-slate-600 bg-slate-100 dark:text-neutral-300 dark:bg-neutral-800'
+          }`}
+        >
+          <CalendarRange className="w-3 h-3 shrink-0" />
+          <span>
+            {formatDateID(task.start_date)} s/d {formatDateID(task.target_date)}
+          </span>
+        </span>
+      );
+    }
+
+    if (task.horizon === 'monthly') {
+      const range = getMonthlyEffectiveRange(task, tasks);
+      if (range) {
+        return (
+          <span className="inline-flex items-center gap-1 font-medium px-1.5 py-0.5 rounded text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/50">
+            <CalendarClock className="w-3 h-3 shrink-0" />
+            <span>
+              {formatDateID(range.start)} s/d {formatDateID(range.end)}
+            </span>
+          </span>
+        );
+      }
+      return (
+        <span className="text-slate-400 dark:text-neutral-500 italic">
+          Menunggu jadwal mingguan
+        </span>
+      );
+    }
+
+    if (MULTI_MONTH_HORIZONS.includes(task.horizon) && task.target_months?.length > 0) {
+      const firstLabel = formatMonthYearID(task.target_months[0]);
+      const extraCount = task.target_months.length - 1;
+      return (
+        <span className="inline-flex items-center gap-1 font-medium px-1.5 py-0.5 rounded text-indigo-700 bg-indigo-50 dark:text-indigo-300 dark:bg-indigo-950/50">
+          <Calendar className="w-3 h-3 shrink-0" />
+          <span>
+            {firstLabel}
+            {extraCount > 0 ? ` +${extraCount} bln` : ''}
+          </span>
+        </span>
+      );
+    }
+
+    return (
+      <span className="text-slate-400 dark:text-neutral-500">
+        {HORIZONS.find((h) => h.id === task.horizon)?.shortLabel || activeHorizonMeta.shortLabel}
+      </span>
+    );
+  }
+
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
-      {/* Brand Header */}
       <div className="px-5 h-16 flex items-center justify-between border-b border-slate-200/80 dark:border-neutral-800/80 shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl bg-emerald-600/10 dark:bg-emerald-500/15 border border-emerald-600/25 dark:border-emerald-500/30 flex items-center justify-center">
@@ -453,10 +1273,10 @@ export default function KanbanBoard({
           </div>
           <div>
             <span className="font-bold tracking-tight text-sm block leading-none">
-              Task Vault
+              Vlow
             </span>
             <span className="text-[11px] text-slate-400 dark:text-neutral-500 mt-1 block">
-              Multi-Horizon Tracker
+              Vault Pribadi Favian
             </span>
           </div>
         </div>
@@ -469,7 +1289,6 @@ export default function KanbanBoard({
         </button>
       </div>
 
-      {/* Horizon Navigation */}
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
         <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-neutral-500">
           Horizon Waktu
@@ -514,8 +1333,38 @@ export default function KanbanBoard({
         })}
       </div>
 
-      {/* Sidebar Bottom Controls */}
       <div className="p-3 border-t border-slate-200/80 dark:border-neutral-800/80 space-y-1.5 shrink-0">
+        <button
+          onClick={() => {
+            setMobileMenuOpen(false);
+            setIsRecapModalOpen(true);
+          }}
+          className="w-full px-3 py-2 rounded-xl text-xs font-semibold text-emerald-700 bg-emerald-50/80 hover:bg-emerald-100/80 dark:text-emerald-300 dark:bg-emerald-950/40 dark:hover:bg-emerald-950/70 border border-emerald-200/70 dark:border-emerald-800/50 flex items-center justify-between transition-colors cursor-pointer"
+        >
+          <span className="flex items-center gap-2.5">
+            <Sparkles className="w-4 h-4 text-emerald-500" />
+            <span>Rekap Tahunan</span>
+          </span>
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-600/15 dark:bg-emerald-500/20">
+            {new Date().getFullYear()}
+          </span>
+        </button>
+
+        <button
+          onClick={openArchiveModal}
+          className="w-full px-3 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100 dark:text-neutral-400 dark:hover:bg-neutral-800/70 flex items-center justify-between transition-colors cursor-pointer"
+        >
+          <span className="flex items-center gap-2.5">
+            <ArchiveRestore className="w-4 h-4 text-amber-500" />
+            <span>Arsip Tugas</span>
+          </span>
+          {archivedTasks.length > 0 && (
+            <span className="text-[11px] px-1.5 py-0.5 rounded-md bg-slate-200/80 text-slate-600 dark:bg-neutral-800 dark:text-neutral-400 font-semibold">
+              {archivedTasks.length}
+            </span>
+          )}
+        </button>
+
         <button
           onClick={() => {
             setMobileMenuOpen(false);
@@ -568,12 +1417,10 @@ export default function KanbanBoard({
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-neutral-950 dark:text-neutral-100 flex transition-colors duration-200">
-      {/* Desktop Left Sidebar */}
       <aside className="hidden lg:block w-64 shrink-0 border-r border-slate-200/80 dark:border-neutral-800/90 bg-white dark:bg-neutral-900/70 sticky top-0 h-screen">
         <SidebarContent />
       </aside>
 
-      {/* Mobile Drawer Sidebar */}
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 lg:hidden flex">
           <div
@@ -586,10 +1433,8 @@ export default function KanbanBoard({
         </div>
       )}
 
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Action Header */}
-        <header className="h-16 border-b border-slate-200/80 dark:border-neutral-800/90 bg-white/80 dark:bg-neutral-900/60 backdrop-blur-md sticky top-0 z-20 px-4 sm:px-6 flex items-center justify-between gap-4">
+        <header className="h-16 border-b border-slate-200/80 dark:border-neutral-800/90 bg-white/80 dark:bg-neutral-900/60 backdrop-blur-md sticky top-0 z-20 px-4 sm:px-6 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => setMobileMenuOpen(true)}
@@ -616,20 +1461,114 @@ export default function KanbanBoard({
             </div>
           </div>
 
-          <button
-            onClick={openCreateModal}
-            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm shadow-emerald-600/20 transition-all cursor-pointer shrink-0"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Tugas Baru</span>
-            <kbd className="hidden md:inline-block text-[10px] bg-emerald-700/80 px-1.5 py-0.5 rounded ml-1 font-mono">
-              N
-            </kbd>
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Badge Daily Streak */}
+            <div
+              title={
+                streakStats.todayDone
+                  ? `Streak aktif! ${streakStats.currentStreak} hari berturut-turut (Rekor: ${streakStats.bestStreak} hari)`
+                  : streakStats.currentStreak > 0
+                  ? `Streak ${streakStats.currentStreak} hari menunggu! Selesaikan 1 tugas harian hari ini agar tidak putus.`
+                  : 'Selesaikan 1 tugas harian hari ini untuk memulai Streak!'
+              }
+              className={`px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all select-none ${
+                streakStats.todayDone
+                  ? 'bg-gradient-to-r from-amber-500/15 to-orange-500/15 text-orange-600 dark:text-amber-300 border-amber-400/50 dark:border-amber-500/40 shadow-xs'
+                  : 'bg-slate-100/80 dark:bg-neutral-900 text-slate-500 dark:text-neutral-400 border-slate-200 dark:border-neutral-800'
+              }`}
+            >
+              <Flame
+                className={`w-4 h-4 shrink-0 ${
+                  streakStats.todayDone
+                    ? 'text-orange-500 fill-orange-500/80 animate-pulse'
+                    : 'text-slate-400 dark:text-neutral-600'
+                }`}
+              />
+              <span>{streakStats.currentStreak}</span>
+              <span className="hidden md:inline font-medium">Hari</span>
+            </div>
+
+            <button
+              onClick={() => setIsRecapModalOpen(true)}
+              className="hidden sm:flex px-3 py-2 bg-white hover:bg-emerald-50 dark:bg-neutral-900 dark:hover:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-slate-200 dark:border-neutral-800 text-xs sm:text-sm font-medium rounded-xl items-center gap-1.5 transition-colors cursor-pointer"
+              title="Lihat Rekap Tahunan"
+            >
+              <Sparkles className="w-4 h-4 text-emerald-500" />
+              <span>Rekap</span>
+            </button>
+
+            <button
+              onClick={openCreateModal}
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm shadow-emerald-600/20 transition-all cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Tugas Baru</span>
+              <kbd className="hidden md:inline-block text-[10px] bg-emerald-700/80 px-1.5 py-0.5 rounded ml-1 font-mono">
+                N
+              </kbd>
+            </button>
+          </div>
         </header>
 
-        {/* Toolbar: Progress, Search & Filter */}
-        <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 pt-5 pb-2">
+        <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 pt-5 pb-2 space-y-3">
+          {/* Strip Streak 7 Hari Terakhir */}
+          <div className="bg-white dark:bg-neutral-900/70 border border-slate-200/90 dark:border-neutral-800 rounded-2xl px-4 py-3 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div
+                className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                  streakStats.todayDone
+                    ? 'bg-orange-500/15 text-orange-500 border border-orange-500/30'
+                    : 'bg-slate-100 dark:bg-neutral-800 text-slate-400 dark:text-neutral-500'
+                }`}
+              >
+                <Flame
+                  className={`w-4 h-4 ${
+                    streakStats.todayDone ? 'fill-orange-500/80' : ''
+                  }`}
+                />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-800 dark:text-neutral-100">
+                    {streakStats.currentStreak > 0
+                      ? `${streakStats.currentStreak} Hari Streak Beruntun`
+                      : 'Belum Ada Streak Aktif'}
+                  </span>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-neutral-800 text-slate-500 dark:text-neutral-400">
+                    Rekor: {streakStats.bestStreak} Hari
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-neutral-400 truncate mt-0.5">
+                  {streakStats.todayDone
+                    ? 'Mantap! Tugas harian hari ini sudah tuntas, streak hari ini menyala.'
+                    : 'Selesaikan minimal 1 tugas harian hari ini untuk menyalakan streak.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 self-start sm:self-center">
+              {streakStats.last7Days.map((day) => (
+                <div
+                  key={day.dateStr}
+                  title={`${formatDateID(day.dateStr)}${
+                    day.isCompleted ? ' • Streak Aktif' : ' • Belum ada tugas harian selesai'
+                  }`}
+                  className={`w-8 h-10 rounded-xl flex flex-col items-center justify-center text-[10px] border transition-all ${
+                    day.isCompleted
+                      ? 'bg-gradient-to-b from-amber-500 to-orange-500 text-white border-orange-500 font-bold shadow-xs shadow-orange-500/20'
+                      : day.isToday
+                      ? 'bg-emerald-50/70 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border-emerald-400/60 border-dashed font-semibold'
+                      : 'bg-slate-50 dark:bg-neutral-950 text-slate-400 dark:text-neutral-500 border-slate-200/80 dark:border-neutral-800'
+                  }`}
+                >
+                  <span className="leading-none">{day.dayShort}</span>
+                  <span className="text-[11px] mt-1 leading-none">{day.dayNum}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Bar Progres & Filter */}
           <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white dark:bg-neutral-900/70 border border-slate-200/90 dark:border-neutral-800 rounded-2xl p-4 shadow-xs">
             <div className="flex items-center gap-4 flex-1">
               <div className="text-sm font-medium text-slate-700 dark:text-neutral-300 whitespace-nowrap">
@@ -668,16 +1607,14 @@ export default function KanbanBoard({
                 )}
               </div>
 
-              <select
+              <CustomSelect
+                size="sm"
+                align="right"
                 value={priorityFilter}
-                onChange={(e) => setPriorityFilter(e.target.value as 'all' | TaskPriority)}
-                className="px-3 py-1.5 text-xs bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-emerald-500 cursor-pointer"
-              >
-                <option value="all">Semua Prioritas</option>
-                <option value="high">Prioritas: High</option>
-                <option value="medium">Prioritas: Medium</option>
-                <option value="low">Prioritas: Low</option>
-              </select>
+                onChange={(val) => setPriorityFilter(val as 'all' | TaskPriority)}
+                options={PRIORITY_FILTER_OPTIONS}
+                className="min-w-[155px]"
+              />
 
               {doneCount > 0 && (
                 <button
@@ -690,10 +1627,13 @@ export default function KanbanBoard({
               )}
             </div>
           </div>
+
+          <p className="md:hidden text-[11px] text-slate-400 dark:text-neutral-500 text-center">
+            Geser kartu ke kanan untuk maju status, atau ke kiri untuk mundur
+          </p>
         </div>
 
-        {/* Kanban Columns */}
-        <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-3 flex-1 grid grid-cols-1 md:grid-cols-3 gap-5">
+        <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-3 flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5">
           {COLUMNS.map((col) => {
             const columnTasks = filteredTasks.filter((t) => t.status === col.id);
             const isOver = dragOverCol === col.id;
@@ -707,13 +1647,13 @@ export default function KanbanBoard({
                 }}
                 onDragLeave={() => setDragOverCol(null)}
                 onDrop={() => handleDrop(col.id)}
-                className={`rounded-2xl p-4 flex flex-col min-h-[460px] border transition-all ${
+                className={`rounded-2xl p-3.5 sm:p-4 flex flex-col min-h-[140px] md:min-h-[460px] border transition-all ${
                   isOver
                     ? 'bg-emerald-50/70 border-emerald-400 dark:bg-emerald-950/20 dark:border-emerald-600/70'
                     : 'bg-slate-100/70 border-slate-200/80 dark:bg-neutral-900/50 dark:border-neutral-800/80'
                 }`}
               >
-                <div className="flex items-center justify-between mb-4 px-1">
+                <div className="flex items-center justify-between mb-3.5 px-1">
                   <div className="flex items-center gap-2">
                     <span
                       className={`w-2.5 h-2.5 rounded-full ${
@@ -736,154 +1676,45 @@ export default function KanbanBoard({
                 <div className="space-y-3 flex-1">
                   {columnTasks.map((task) => {
                     const parentTask = task.parent_id
-                      ? tasks.find((p) => p.id === task.parent_id)
+                      ? tasks.find((p) => p.id === task.parent_id) || null
                       : null;
 
                     const childTasks = tasks.filter((c) => c.parent_id === task.id);
                     const completedChildren = childTasks.filter((c) => c.status === 'done').length;
 
-                    const prio = PRIORITY_META[task.priority || 'medium'];
-                    const isOverdue =
-                      task.target_date && task.target_date < todayStr && task.status !== 'done';
-                    const isDueToday =
-                      task.target_date && task.target_date === todayStr && task.status !== 'done';
-
                     return (
-                      <div
+                      <SwipeableTaskCard
                         key={task.id}
-                        draggable
+                        task={task}
+                        colId={col.id}
+                        parentTask={parentTask}
+                        childCount={childTasks.length}
+                        completedChildren={completedChildren}
+                        scheduleBadge={renderTaskScheduleBadge(task)}
                         onDragStart={() => setDraggedTaskId(task.id)}
                         onDragEnd={() => {
                           setDraggedTaskId(null);
                           setDragOverCol(null);
                         }}
-                        onClick={() => openDetailModal(task)}
-                        className="group bg-white hover:bg-slate-50/90 dark:bg-neutral-900 dark:hover:bg-neutral-800/90 border border-slate-200/90 hover:border-emerald-400/60 dark:border-neutral-800 dark:hover:border-emerald-600/50 rounded-xl p-3.5 shadow-xs hover:shadow-md transition-all cursor-pointer"
-                      >
-                        <div className="flex flex-wrap items-center gap-1.5 mb-2">
-                          <span
-                            className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md border ${prio.badgeClass}`}
-                          >
-                            <span className={`w-1.5 h-1.5 rounded-full ${prio.dotClass}`} />
-                            {prio.label}
-                          </span>
-
-                          {parentTask && (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/50 dark:border-emerald-800/60 px-2 py-0.5 rounded-md max-w-[180px]">
-                              <Link2 className="w-2.5 h-2.5 shrink-0" />
-                              <span className="truncate">{parentTask.title}</span>
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="flex items-start justify-between gap-2">
-                          <h3
-                            className={`text-sm font-semibold leading-snug group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors ${
-                              task.status === 'done'
-                                ? 'line-through text-slate-400 dark:text-neutral-500'
-                                : 'text-slate-800 dark:text-neutral-100'
-                            }`}
-                          >
-                            {task.title}
-                          </h3>
-
-                          <div
-                            onClick={(e) => e.stopPropagation()}
-                            className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                          >
-                            <button
-                              onClick={() => openEditModal(task)}
-                              className="text-slate-400 hover:text-slate-700 dark:text-neutral-500 dark:hover:text-neutral-200 p-1 rounded cursor-pointer"
-                              title="Edit tugas"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDelete(task.id)}
-                              className="text-slate-400 hover:text-rose-600 dark:text-neutral-500 dark:hover:text-rose-400 p-1 rounded cursor-pointer"
-                              title="Hapus tugas"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {task.description && (
-                          <p className="text-xs text-slate-500 dark:text-neutral-400 mt-1.5 line-clamp-2 leading-relaxed">
-                            {task.description}
-                          </p>
-                        )}
-
-                        {childTasks.length > 0 && (
-                          <div className="mt-2.5 flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200/70 dark:border-indigo-900/50 px-2 py-1 rounded-lg w-fit">
-                            <Layers className="w-3 h-3" />
-                            <span>
-                              {completedChildren}/{childTasks.length} sub-tugas selesai
-                            </span>
-                          </div>
-                        )}
-
-                        <div
-                          onClick={(e) => e.stopPropagation()}
-                          className="mt-3 pt-2.5 border-t border-slate-100 dark:border-neutral-800/80 flex items-center justify-between text-[11px]"
-                        >
-                          <div className="flex items-center gap-1.5">
-                            {task.target_date ? (
-                              <span
-                                className={`inline-flex items-center gap-1 font-medium px-1.5 py-0.5 rounded ${
-                                  isOverdue
-                                    ? 'text-rose-600 bg-rose-50 dark:text-rose-400 dark:bg-rose-950/50'
-                                    : isDueToday
-                                    ? 'text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/50'
-                                    : 'text-slate-500 dark:text-neutral-400'
-                                }`}
-                              >
-                                {isOverdue ? (
-                                  <AlertCircle className="w-3 h-3" />
-                                ) : (
-                                  <Calendar className="w-3 h-3" />
-                                )}
-                                <span>{isDueToday ? 'Hari ini' : task.target_date}</span>
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 dark:text-neutral-500">
-                                {activeHorizonMeta.shortLabel}
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-1">
-                            {col.id !== 'todo' && (
-                              <button
-                                onClick={() => handleQuickMove(task, 'prev')}
-                                className="p-1 hover:bg-slate-100 dark:hover:bg-neutral-700 rounded text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white cursor-pointer"
-                                title="Geser ke kiri"
-                              >
-                                <ChevronLeft className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                            {col.id !== 'done' ? (
-                              <button
-                                onClick={() => handleQuickMove(task, 'next')}
-                                className="p-1 hover:bg-slate-100 dark:hover:bg-neutral-700 rounded text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white cursor-pointer"
-                                title="Geser ke kanan"
-                              >
-                                <ChevronRight className="w-3.5 h-3.5" />
-                              </button>
-                            ) : (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                        onOpenDetail={() => openDetailModal(task)}
+                        onEdit={() => openEditModal(task)}
+                        onDelete={() => handleDelete(task.id)}
+                        onMovePrev={() => handleQuickMove(task, 'prev')}
+                        onMoveNext={() => handleQuickMove(task, 'next')}
+                      />
                     );
                   })}
 
                   {columnTasks.length === 0 && (
-                    <div className="h-28 border border-dashed border-slate-300/80 dark:border-neutral-800 rounded-xl flex items-center justify-center text-xs text-slate-400 dark:text-neutral-600">
-                      {searchQuery || priorityFilter !== 'all'
-                        ? 'Tidak ada tugas yang cocok dengan filter'
-                        : 'Tarik kartu ke sini'}
+                    <div className="h-20 md:h-28 border border-dashed border-slate-300/80 dark:border-neutral-800 rounded-xl flex items-center justify-center text-xs text-slate-400 dark:text-neutral-600 px-4 text-center">
+                      {searchQuery || priorityFilter !== 'all' ? (
+                        'Tidak ada tugas yang cocok dengan filter'
+                      ) : (
+                        <>
+                          <span className="hidden md:inline">Tarik kartu ke sini</span>
+                          <span className="md:hidden">Belum ada tugas di {col.title}</span>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -893,7 +1724,157 @@ export default function KanbanBoard({
         </main>
       </div>
 
-      {/* Modal Detail Kartu & Sub-Tugas Hierarkis */}
+      {/* Modal Rekap Tahunan */}
+      <YearlyRecapModal
+        isOpen={isRecapModalOpen}
+        onClose={() => setIsRecapModalOpen(false)}
+        allTasks={allCombinedTasks}
+      />
+
+      {/* Modal Arsip Tugas & Pemulihan */}
+      {isArchiveModalOpen && (
+        <div
+          onClick={() => setIsArchiveModalOpen(false)}
+          className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+          >
+            <div className="px-5 sm:px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center">
+                  <ArchiveRestore className="w-4 h-4 text-amber-500" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold leading-none">Arsip Tugas</h2>
+                  <p className="text-[11px] text-slate-500 dark:text-neutral-400 mt-1">
+                    Pulihkan tugas kembali ke papan aktif atau hapus secara permanen
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setIsArchiveModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-neutral-200 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 sm:px-6 py-3 bg-slate-50/70 dark:bg-neutral-950/60 border-b border-slate-100 dark:border-neutral-800 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
+              <div className="relative flex-1">
+                <Search className="w-3.5 h-3.5 text-slate-400 dark:text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={archiveSearch}
+                  onChange={(e) => setArchiveSearch(e.target.value)}
+                  placeholder="Cari judul tugas di arsip..."
+                  className="w-full pl-8 pr-7 py-1.5 text-xs bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-emerald-500"
+                />
+                {archiveSearch && (
+                  <button
+                    onClick={() => setArchiveSearch('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <CustomSelect
+                size="sm"
+                align="right"
+                value={archiveHorizonFilter}
+                onChange={(val) => setArchiveHorizonFilter(val as 'all' | Horizon)}
+                options={archiveHorizonOptions}
+                className="sm:w-44"
+              />
+            </div>
+
+            <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-2.5">
+              {archiveLoading ? (
+                <div className="py-12 text-center text-xs text-slate-400 dark:text-neutral-500 animate-pulse">
+                  Memuat daftar arsip...
+                </div>
+              ) : filteredArchivedTasks.length > 0 ? (
+                filteredArchivedTasks.map((arch) => {
+                  const horizonMeta = HORIZONS.find((h) => h.id === arch.horizon);
+                  const prio = PRIORITY_META[arch.priority || 'medium'];
+
+                  return (
+                    <div
+                      key={arch.id}
+                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-50 dark:bg-neutral-950/70 border border-slate-200/80 dark:border-neutral-800/80"
+                    >
+                      <div className="min-w-0 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-200/80 text-slate-700 dark:bg-neutral-800 dark:text-neutral-300">
+                            {horizonMeta?.label}
+                          </span>
+                          <span
+                            className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md border ${prio.badgeClass}`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${prio.dotClass}`} />
+                            {prio.label}
+                          </span>
+                          <span className="text-[10px]">{renderTaskScheduleBadge(arch)}</span>
+                        </div>
+
+                        <h3 className="text-sm font-semibold text-slate-800 dark:text-neutral-200 truncate">
+                          {arch.title}
+                        </h3>
+
+                        {arch.description && (
+                          <p className="text-xs text-slate-500 dark:text-neutral-400 line-clamp-1">
+                            {arch.description}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => handleRestoreTask(arch, 'todo')}
+                          className="px-2.5 py-1.5 text-[11px] font-medium bg-white hover:bg-slate-100 dark:bg-neutral-900 dark:hover:bg-neutral-800 text-slate-700 dark:text-neutral-300 border border-slate-200 dark:border-neutral-700 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                          title="Kembalikan ke kolom To Do"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Ke To Do</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleRestoreTask(arch, 'done')}
+                          className="px-2.5 py-1.5 text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                          title="Kembalikan ke kolom Done"
+                        >
+                          <ArchiveRestore className="w-3 h-3" />
+                          <span>Pulihkan</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleDeleteArchivedPermanently(arch.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                          title="Hapus permanen"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="py-12 text-center text-xs text-slate-400 dark:text-neutral-500 border border-dashed border-slate-200 dark:border-neutral-800 rounded-xl">
+                  {archiveSearch || archiveHorizonFilter !== 'all'
+                    ? 'Tidak ada tugas arsip yang cocok dengan filter.'
+                    : 'Belum ada tugas yang diarsipkan.'}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Detail Kartu & Relasi Sub-Tugas */}
       {detailTask && (
         <div
           onClick={() => setDetailTaskId(null)}
@@ -903,8 +1884,7 @@ export default function KanbanBoard({
             onClick={(e) => e.stopPropagation()}
             className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-lg max-h-[88vh] flex flex-col shadow-2xl overflow-hidden"
           >
-            {/* Detail Header */}
-            <div className="px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0">
+            <div className="px-5 sm:px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span
                   className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-md border ${
@@ -923,10 +1903,27 @@ export default function KanbanBoard({
                   {HORIZONS.find((h) => h.id === detailTask.horizon)?.label}
                 </span>
 
-                {detailTask.target_date && (
-                  <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-neutral-400 bg-slate-100 dark:bg-neutral-800 px-2 py-0.5 rounded-md">
+                {detailTask.horizon === 'daily' && detailTask.target_date && (
+                  <span className="inline-flex items-center gap-1 text-[11px] text-slate-600 dark:text-neutral-300 bg-slate-100 dark:bg-neutral-800 px-2.5 py-0.5 rounded-md">
                     <Calendar className="w-3 h-3" />
-                    {detailTask.target_date}
+                    {formatDateID(detailTask.target_date)}
+                  </span>
+                )}
+
+                {detailTask.horizon === 'weekly' &&
+                  detailTask.start_date &&
+                  detailTask.target_date && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-slate-600 dark:text-neutral-300 bg-slate-100 dark:bg-neutral-800 px-2.5 py-0.5 rounded-md">
+                      <CalendarRange className="w-3 h-3" />
+                      {formatDateID(detailTask.start_date)} s/d {formatDateID(detailTask.target_date)}
+                    </span>
+                  )}
+
+                {detailTask.horizon === 'monthly' && detailMonthlyRange && (
+                  <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800/60 px-2.5 py-0.5 rounded-md">
+                    <CalendarClock className="w-3 h-3" />
+                    {formatDateID(detailMonthlyRange.start)} s/d{' '}
+                    {formatDateID(detailMonthlyRange.end)}
                   </span>
                 )}
               </div>
@@ -948,8 +1945,7 @@ export default function KanbanBoard({
               </div>
             </div>
 
-            {/* Detail Body */}
-            <div className="p-6 overflow-y-auto space-y-5">
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-5">
               <div>
                 <h2 className="text-lg font-bold leading-snug text-slate-900 dark:text-neutral-100">
                   {detailTask.title}
@@ -963,16 +1959,72 @@ export default function KanbanBoard({
                     Tidak ada deskripsi tambahan.
                   </p>
                 )}
+
+                {MULTI_MONTH_HORIZONS.includes(detailTask.horizon) &&
+                  detailTask.target_months?.length > 0 && (
+                    <div className="mt-4 p-3.5 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/25 border border-indigo-200/80 dark:border-indigo-900/50 space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                          Target Bulan ({detailTask.target_months.length})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowMonthDetails((prev) => !prev)}
+                          className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-200 inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>
+                            {showMonthDetails ? 'Sembunyikan detail' : 'Lihat selengkapnya'}
+                          </span>
+                          {showMonthDetails ? (
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          ) : (
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap gap-1.5">
+                        {detailTask.target_months.map((ym) => (
+                          <span
+                            key={ym}
+                            className="text-xs font-medium px-2.5 py-1 rounded-lg bg-white dark:bg-neutral-900 border border-indigo-200/80 dark:border-indigo-800/60 text-slate-700 dark:text-neutral-200"
+                          >
+                            {formatMonthYearID(ym)}
+                          </span>
+                        ))}
+                      </div>
+
+                      {showMonthDetails && (
+                        <div className="pt-2 border-t border-indigo-200/60 dark:border-indigo-900/50 space-y-1.5">
+                          {detailTask.target_months.map((ym) => {
+                            const bounds = getMonthDetailBounds(ym, detailTask, tasks);
+                            return (
+                              <div
+                                key={ym}
+                                className="flex items-center justify-between text-xs bg-white/80 dark:bg-neutral-900/80 px-3 py-2 rounded-lg border border-indigo-100 dark:border-neutral-800"
+                              >
+                                <span className="font-semibold text-slate-700 dark:text-neutral-200">
+                                  {formatMonthYearID(ym)}
+                                </span>
+                                <span className="text-slate-500 dark:text-neutral-400">
+                                  {formatDateID(bounds.start)} s/d {formatDateID(bounds.end)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
               </div>
 
-              {/* Bagian Bawah: Hanya muncul untuk Mingguan ke atas (Harian bersih tanpa bagian ini) */}
               {detailChildHorizon && detailChildHorizonMeta && (
                 <div className="pt-4 border-t border-slate-200/80 dark:border-neutral-800 space-y-3.5">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Layers className="w-4 h-4 text-emerald-500" />
                       <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-neutral-300">
-                        Daftar Tugas {detailChildHorizonMeta.label}
+                        Relasi Tugas {detailChildHorizonMeta.label}
                       </h3>
                     </div>
                     <span className="text-xs text-slate-400 dark:text-neutral-500">
@@ -981,37 +2033,183 @@ export default function KanbanBoard({
                     </span>
                   </div>
 
-                  {/* Form Input Sub-Tugas Langsung */}
-                  <form
-                    onSubmit={(e) => handleAddSubtask(e, detailTask, detailChildHorizon)}
-                    className="flex items-center gap-2"
-                  >
-                    <input
-                      type="text"
-                      value={newSubtaskTitle}
-                      onChange={(e) => setNewSubtaskTitle(e.target.value)}
-                      placeholder={`Tambah tugas ${detailChildHorizonMeta.label.toLowerCase()}...`}
-                      className="flex-1 px-3 py-2 text-xs bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-emerald-500"
-                    />
-                    <select
-                      value={newSubtaskPriority}
-                      onChange={(e) => setNewSubtaskPriority(e.target.value as TaskPriority)}
-                      className="px-2.5 py-2 text-xs bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-emerald-500 cursor-pointer"
-                    >
-                      <option value="low">Low</option>
-                      <option value="medium">Med</option>
-                      <option value="high">High</option>
-                    </select>
+                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 dark:bg-neutral-950 rounded-xl border border-slate-200/80 dark:border-neutral-800">
                     <button
-                      type="submit"
-                      className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1 shrink-0 cursor-pointer"
+                      type="button"
+                      onClick={() => {
+                        setSubtaskMode('pick');
+                        setSubtaskError('');
+                      }}
+                      className={`py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        subtaskMode === 'pick'
+                          ? 'bg-white dark:bg-neutral-800 text-emerald-600 dark:text-emerald-400 shadow-xs'
+                          : 'text-slate-500 hover:text-slate-800 dark:text-neutral-400 dark:hover:text-neutral-200'
+                      }`}
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Tambah</span>
+                      Ambil dari {detailChildHorizonMeta.label}
                     </button>
-                  </form>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSubtaskMode('create');
+                        setSubtaskError('');
+                      }}
+                      className={`py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        subtaskMode === 'create'
+                          ? 'bg-white dark:bg-neutral-800 text-emerald-600 dark:text-emerald-400 shadow-xs'
+                          : 'text-slate-500 hover:text-slate-800 dark:text-neutral-400 dark:hover:text-neutral-200'
+                      }`}
+                    >
+                      + Buat {detailChildHorizonMeta.label} Baru
+                    </button>
+                  </div>
 
-                  {/* List Sub-Tugas */}
+                  {subtaskMode === 'pick' ? (
+                    <form
+                      onSubmit={(e) => handleAttachExistingChild(e, detailTask)}
+                      className="space-y-2.5 bg-slate-50 dark:bg-neutral-950/80 p-3 rounded-xl border border-slate-200/80 dark:border-neutral-800"
+                    >
+                      <label className="block text-[11px] font-medium text-slate-600 dark:text-neutral-400">
+                        Pilih tugas {detailChildHorizonMeta.label.toLowerCase()} yang sudah dibuat:
+                      </label>
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                        <CustomSelect
+                          size="sm"
+                          value={selectedExistingChildId}
+                          onChange={setSelectedExistingChildId}
+                          options={childCandidateOptions}
+                          className="flex-1 min-w-0"
+                        />
+
+                        <button
+                          type="submit"
+                          disabled={!selectedExistingChildId}
+                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1 shrink-0 cursor-pointer"
+                        >
+                          <Link2 className="w-3.5 h-3.5" />
+                          <span>Tautkan</span>
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <form
+                      onSubmit={(e) => handleAddSubtask(e, detailTask, detailChildHorizon)}
+                      className="space-y-2.5 bg-slate-50 dark:bg-neutral-950/80 p-3 rounded-xl border border-slate-200/80 dark:border-neutral-800"
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={newSubtaskTitle}
+                          onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                          placeholder={`Judul tugas ${detailChildHorizonMeta.label.toLowerCase()} baru...`}
+                          className="flex-1 px-3 py-2 text-xs bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-emerald-500"
+                        />
+                        <CustomSelect
+                          size="sm"
+                          align="right"
+                          value={newSubtaskPriority}
+                          onChange={(val) => setNewSubtaskPriority(val as TaskPriority)}
+                          options={SUBTASK_PRIORITY_OPTIONS}
+                          className="w-24 shrink-0"
+                        />
+                      </div>
+
+                      {detailChildHorizon === 'daily' && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-medium text-slate-500 dark:text-neutral-400 shrink-0">
+                            Tanggal Wajib:
+                          </span>
+                          <CustomDatePicker
+                            size="sm"
+                            required
+                            value={newSubtaskTargetDate}
+                            onChange={setNewSubtaskTargetDate}
+                            className="flex-1"
+                          />
+                        </div>
+                      )}
+
+                      {detailChildHorizon === 'weekly' && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[10px] font-medium text-slate-500 dark:text-neutral-400 mb-0.5">
+                              Dari Tanggal *
+                            </label>
+                            <CustomDatePicker
+                              size="sm"
+                              required
+                              value={newSubtaskStartDate}
+                              onChange={setNewSubtaskStartDate}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-medium text-slate-500 dark:text-neutral-400 mb-0.5">
+                              Sampai Tanggal *
+                            </label>
+                            <CustomDatePicker
+                              size="sm"
+                              required
+                              min={newSubtaskStartDate || undefined}
+                              value={newSubtaskTargetDate}
+                              onChange={setNewSubtaskTargetDate}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {MULTI_MONTH_HORIZONS.includes(detailChildHorizon) && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <CustomMonthPicker
+                              size="sm"
+                              value={subtaskMonthPicker}
+                              onChange={setSubtaskMonthPicker}
+                              className="flex-1"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleAddMonthToSubtask}
+                              className="px-2.5 py-1.5 text-xs font-medium bg-slate-200 hover:bg-slate-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 rounded-lg cursor-pointer"
+                            >
+                              + Bulan
+                            </button>
+                          </div>
+                          {newSubtaskMonths.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {newSubtaskMonths.map((ym) => (
+                                <span
+                                  key={ym}
+                                  className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60"
+                                >
+                                  {formatMonthYearID(ym)}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveMonthFromSubtask(ym)}
+                                    className="hover:text-rose-500 cursor-pointer"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {subtaskError && (
+                        <p className="text-[11px] text-rose-600 dark:text-rose-400">{subtaskError}</p>
+                      )}
+
+                      <button
+                        type="submit"
+                        className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Simpan & Kaitkan Tugas {detailChildHorizonMeta.label}</span>
+                      </button>
+                    </form>
+                  )}
+
                   <div className="space-y-2">
                     {detailSubtasks.map((sub) => {
                       const subPrio = PRIORITY_META[sub.priority || 'medium'];
@@ -1035,27 +2233,39 @@ export default function KanbanBoard({
                               )}
                             </button>
 
-                            <span
-                              className={`text-xs font-medium truncate ${
-                                sub.status === 'done'
-                                  ? 'line-through text-slate-400 dark:text-neutral-500'
-                                  : 'text-slate-800 dark:text-neutral-200'
-                              }`}
-                            >
-                              {sub.title}
-                            </span>
+                            <div className="min-w-0">
+                              <span
+                                className={`text-xs font-medium block truncate ${
+                                  sub.status === 'done'
+                                    ? 'line-through text-slate-400 dark:text-neutral-500'
+                                    : 'text-slate-800 dark:text-neutral-200'
+                                }`}
+                              >
+                                {sub.title}
+                              </span>
+                              <div className="mt-0.5 text-[10px]">
+                                {renderTaskScheduleBadge(sub)}
+                              </div>
+                            </div>
                           </div>
 
-                          <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-1.5 shrink-0">
                             <span
                               className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${subPrio.badgeClass}`}
                             >
                               {subPrio.label}
                             </span>
                             <button
+                              onClick={() => handleDetachChild(sub.id)}
+                              className="text-slate-400 hover:text-amber-500 p-1 cursor-pointer"
+                              title="Lepas relasi (tugas asli tetap tersimpan)"
+                            >
+                              <Unlink className="w-3.5 h-3.5" />
+                            </button>
+                            <button
                               onClick={() => handleDelete(sub.id)}
                               className="text-slate-400 hover:text-rose-500 p-1 cursor-pointer"
-                              title="Hapus sub-tugas"
+                              title="Hapus permanen"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -1066,7 +2276,7 @@ export default function KanbanBoard({
 
                     {detailSubtasks.length === 0 && (
                       <div className="py-5 text-center text-xs text-slate-400 dark:text-neutral-500 border border-dashed border-slate-200 dark:border-neutral-800 rounded-xl">
-                        Belum ada tugas {detailChildHorizonMeta.label.toLowerCase()} di dalam kartu ini.
+                        Belum ada tugas {detailChildHorizonMeta.label.toLowerCase()} yang terhubung.
                       </div>
                     )}
                   </div>
@@ -1080,7 +2290,7 @@ export default function KanbanBoard({
       {/* Modal Tambah / Edit Tugas */}
       {isFormModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-md p-6 shadow-2xl">
+          <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5 sm:p-6 shadow-2xl">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-bold">
                 {editingTask ? 'Edit Tugas' : 'Tambah Tugas Baru'}
@@ -1114,37 +2324,142 @@ export default function KanbanBoard({
                   <label className="block text-xs font-medium text-slate-600 dark:text-neutral-400 mb-1">
                     Rentang Waktu
                   </label>
-                  <select
+                  <CustomSelect
                     value={formHorizon}
-                    onChange={(e) => {
-                      setFormHorizon(e.target.value as Horizon);
+                    onChange={(val) => {
+                      const nextHorizon = val as Horizon;
+                      const today = getTodayDateString();
+                      setFormHorizon(nextHorizon);
                       setParentId('');
+                      setFormError('');
+                      if (nextHorizon === 'daily') {
+                        setStartDate('');
+                        if (!targetDate) setTargetDate(today);
+                      } else if (nextHorizon === 'weekly') {
+                        if (!startDate) setStartDate(today);
+                        if (!targetDate) setTargetDate(today);
+                      } else if (MULTI_MONTH_HORIZONS.includes(nextHorizon)) {
+                        if (targetMonths.length === 0) {
+                          setTargetMonths([getCurrentMonthString()]);
+                        }
+                      }
                     }}
-                    className="w-full px-3 py-2.5 bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl text-sm focus:outline-none focus:border-emerald-500"
-                  >
-                    {HORIZONS.map((h) => (
-                      <option key={h.id} value={h.id}>
-                        {h.label}
-                      </option>
-                    ))}
-                  </select>
+                    options={formHorizonOptions}
+                  />
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-slate-600 dark:text-neutral-400 mb-1">
                     Prioritas
                   </label>
-                  <select
+                  <CustomSelect
+                    align="right"
                     value={priority}
-                    onChange={(e) => setPriority(e.target.value as TaskPriority)}
-                    className="w-full px-3 py-2.5 bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl text-sm focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="low">Low (Santai)</option>
-                    <option value="medium">Medium (Normal)</option>
-                    <option value="high">High (Penting)</option>
-                  </select>
+                    onChange={(val) => setPriority(val as TaskPriority)}
+                    options={FORM_PRIORITY_OPTIONS}
+                  />
                 </div>
               </div>
+
+              {formHorizon === 'daily' && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 dark:text-neutral-400 mb-1">
+                    Tanggal Pengerjaan *
+                  </label>
+                  <CustomDatePicker
+                    required
+                    value={targetDate}
+                    onChange={setTargetDate}
+                  />
+                </div>
+              )}
+
+              {formHorizon === 'weekly' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 dark:text-neutral-400 mb-1">
+                      Dari Tanggal *
+                    </label>
+                    <CustomDatePicker
+                      required
+                      value={startDate}
+                      onChange={setStartDate}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 dark:text-neutral-400 mb-1">
+                      Sampai Tanggal *
+                    </label>
+                    <CustomDatePicker
+                      required
+                      min={startDate || undefined}
+                      value={targetDate}
+                      onChange={setTargetDate}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {formHorizon === 'monthly' && (
+                <div className="p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/50 text-xs text-emerald-800 dark:text-emerald-300 space-y-1">
+                  <div className="font-semibold">Rentang Tanggal Otomatis</div>
+                  {editingMonthlyPreview ? (
+                    <p>
+                      Terdeteksi:{' '}
+                      <strong>
+                        {formatDateID(editingMonthlyPreview.start)} s/d{' '}
+                        {formatDateID(editingMonthlyPreview.end)}
+                      </strong>
+                    </p>
+                  ) : (
+                    <p className="text-[11px] opacity-90">
+                      Tanggal awal dan akhir otomatis terdeteksi dari tugas Mingguan yang ditautkan ke kartu ini.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {MULTI_MONTH_HORIZONS.includes(formHorizon) && (
+                <div className="space-y-2">
+                  <label className="block text-xs font-medium text-slate-600 dark:text-neutral-400">
+                    Pilih Bulan Target *
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <CustomMonthPicker
+                      value={monthPicker}
+                      onChange={setMonthPicker}
+                      className="flex-1"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddMonthToForm}
+                      className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl cursor-pointer shrink-0"
+                    >
+                      + Tambah Bulan
+                    </button>
+                  </div>
+
+                  {targetMonths.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {targetMonths.map((ym) => (
+                        <span
+                          key={ym}
+                          className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60"
+                        >
+                          <span>{formatMonthYearID(ym)}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMonthFromForm(ym)}
+                            className="hover:text-rose-500 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-medium text-slate-600 dark:text-neutral-400 mb-1">
@@ -1164,32 +2479,18 @@ export default function KanbanBoard({
                   <label className="block text-xs font-medium text-slate-600 dark:text-neutral-400 mb-1">
                     Tautkan ke Target Induk (Opsional)
                   </label>
-                  <select
+                  <CustomSelect
                     value={parentId}
-                    onChange={(e) => setParentId(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl text-sm focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="">-- Tidak ditautkan --</option>
-                    {parentCandidates.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        [{HORIZONS.find((h) => h.id === p.horizon)?.shortLabel}] {p.title}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setParentId}
+                    options={parentCandidateOptions}
+                    placeholder="Tidak ditautkan"
+                  />
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-medium text-slate-600 dark:text-neutral-400 mb-1">
-                  Target Tanggal (Opsional)
-                </label>
-                <input
-                  type="date"
-                  value={targetDate}
-                  onChange={(e) => setTargetDate(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl text-sm focus:outline-none focus:border-emerald-500"
-                />
-              </div>
+              {formError && (
+                <p className="text-xs text-rose-600 dark:text-rose-400 font-medium">{formError}</p>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
@@ -1214,7 +2515,7 @@ export default function KanbanBoard({
       {/* Modal Share Vault (Read-Only) */}
       {isShareModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4">
+          <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-md p-5 sm:p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Share2 className="w-4 h-4 text-sky-500" />

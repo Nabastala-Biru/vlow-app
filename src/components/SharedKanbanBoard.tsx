@@ -15,6 +15,8 @@ import {
   CheckCircle2,
   Clock,
   Circle,
+  ChevronDown,
+  ChevronUp,
   CalendarDays,
   CalendarRange,
   CalendarClock,
@@ -29,6 +31,10 @@ import {
   Horizon,
   Task,
   TaskPriority,
+  formatDateID,
+  formatMonthYearID,
+  getMonthDetailBounds,
+  getMonthlyEffectiveRange,
 } from '@/types/task';
 
 function getTodayDateString() {
@@ -38,6 +44,8 @@ function getTodayDateString() {
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
+
+const MULTI_MONTH_HORIZONS: Horizon[] = ['quarterly', 'biannual', 'yearly'];
 
 const HORIZON_ICONS: Record<Horizon, React.ComponentType<{ className?: string }>> = {
   daily: CalendarDays,
@@ -79,6 +87,7 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'all' | TaskPriority>('all');
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
+  const [showMonthDetails, setShowMonthDetails] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('vault_theme');
@@ -116,6 +125,89 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
     ? HORIZONS.find((h) => h.id === detailChildHorizon) || null
     : null;
   const detailSubtasks = detailTask ? tasks.filter((t) => t.parent_id === detailTask.id) : [];
+  const detailMonthlyRange =
+    detailTask && detailTask.horizon === 'monthly'
+      ? getMonthlyEffectiveRange(detailTask, tasks)
+      : null;
+
+  function renderTaskScheduleBadge(task: Task) {
+    if (task.horizon === 'daily' && task.target_date) {
+      const isOverdue = task.target_date < todayStr && task.status !== 'done';
+      const isDueToday = task.target_date === todayStr && task.status !== 'done';
+
+      return (
+        <span
+          className={`inline-flex items-center gap-1 font-medium px-1.5 py-0.5 rounded ${
+            isOverdue
+              ? 'text-rose-600 bg-rose-50 dark:text-rose-400 dark:bg-rose-950/50'
+              : isDueToday
+              ? 'text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/50'
+              : 'text-slate-500 dark:text-neutral-400'
+          }`}
+        >
+          {isOverdue ? <AlertCircle className="w-3 h-3" /> : <Calendar className="w-3 h-3" />}
+          <span>{isDueToday ? 'Hari ini' : formatDateID(task.target_date)}</span>
+        </span>
+      );
+    }
+
+    if (task.horizon === 'weekly' && task.start_date && task.target_date) {
+      const isOverdue = task.target_date < todayStr && task.status !== 'done';
+      return (
+        <span
+          className={`inline-flex items-center gap-1 font-medium px-1.5 py-0.5 rounded ${
+            isOverdue
+              ? 'text-rose-600 bg-rose-50 dark:text-rose-400 dark:bg-rose-950/50'
+              : 'text-slate-600 bg-slate-100 dark:text-neutral-300 dark:bg-neutral-800'
+          }`}
+        >
+          <CalendarRange className="w-3 h-3 shrink-0" />
+          <span>
+            {formatDateID(task.start_date)} s/d {formatDateID(task.target_date)}
+          </span>
+        </span>
+      );
+    }
+
+    if (task.horizon === 'monthly') {
+      const range = getMonthlyEffectiveRange(task, tasks);
+      if (range) {
+        return (
+          <span className="inline-flex items-center gap-1 font-medium px-1.5 py-0.5 rounded text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/50">
+            <CalendarClock className="w-3 h-3 shrink-0" />
+            <span>
+              {formatDateID(range.start)} s/d {formatDateID(range.end)}
+            </span>
+          </span>
+        );
+      }
+      return (
+        <span className="text-slate-400 dark:text-neutral-500 italic">
+          Menunggu jadwal mingguan
+        </span>
+      );
+    }
+
+    if (MULTI_MONTH_HORIZONS.includes(task.horizon) && task.target_months?.length > 0) {
+      const firstLabel = formatMonthYearID(task.target_months[0]);
+      const extraCount = task.target_months.length - 1;
+      return (
+        <span className="inline-flex items-center gap-1 font-medium px-1.5 py-0.5 rounded text-indigo-700 bg-indigo-50 dark:text-indigo-300 dark:bg-indigo-950/50">
+          <Calendar className="w-3 h-3 shrink-0" />
+          <span>
+            {firstLabel}
+            {extraCount > 0 ? ` +${extraCount} bln` : ''}
+          </span>
+        </span>
+      );
+    }
+
+    return (
+      <span className="text-slate-400 dark:text-neutral-500">
+        {activeHorizonMeta.shortLabel}
+      </span>
+    );
+  }
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
@@ -342,15 +434,13 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
                     const completedChildren = childTasks.filter((c) => c.status === 'done').length;
                     const prio = PRIORITY_META[task.priority || 'medium'];
 
-                    const isOverdue =
-                      task.target_date && task.target_date < todayStr && task.status !== 'done';
-                    const isDueToday =
-                      task.target_date && task.target_date === todayStr && task.status !== 'done';
-
                     return (
                       <div
                         key={task.id}
-                        onClick={() => setDetailTaskId(task.id)}
+                        onClick={() => {
+                          setShowMonthDetails(false);
+                          setDetailTaskId(task.id);
+                        }}
                         className="group bg-white hover:bg-slate-50/90 dark:bg-neutral-900 dark:hover:bg-neutral-800/90 border border-slate-200/90 hover:border-sky-400/60 dark:border-neutral-800 dark:hover:border-sky-600/50 rounded-xl p-3.5 shadow-xs hover:shadow-md transition-all cursor-pointer"
                       >
                         <div className="flex flex-wrap items-center gap-1.5 mb-2">
@@ -395,28 +485,7 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
                         )}
 
                         <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-neutral-800/80 flex items-center justify-between text-[11px]">
-                          {task.target_date ? (
-                            <span
-                              className={`inline-flex items-center gap-1 font-medium px-1.5 py-0.5 rounded ${
-                                isOverdue
-                                  ? 'text-rose-600 bg-rose-50 dark:text-rose-400 dark:bg-rose-950/50'
-                                  : isDueToday
-                                  ? 'text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/50'
-                                  : 'text-slate-500 dark:text-neutral-400'
-                              }`}
-                            >
-                              {isOverdue ? (
-                                <AlertCircle className="w-3 h-3" />
-                              ) : (
-                                <Calendar className="w-3 h-3" />
-                              )}
-                              <span>{isDueToday ? 'Hari ini' : task.target_date}</span>
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 dark:text-neutral-500">
-                              {activeHorizonMeta.shortLabel}
-                            </span>
-                          )}
+                          {renderTaskScheduleBadge(task)}
                         </div>
                       </div>
                     );
@@ -463,10 +532,27 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
                   {HORIZONS.find((h) => h.id === detailTask.horizon)?.label}
                 </span>
 
-                {detailTask.target_date && (
-                  <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-neutral-400 bg-slate-100 dark:bg-neutral-800 px-2 py-0.5 rounded-md">
+                {detailTask.horizon === 'daily' && detailTask.target_date && (
+                  <span className="inline-flex items-center gap-1 text-[11px] text-slate-600 dark:text-neutral-300 bg-slate-100 dark:bg-neutral-800 px-2.5 py-0.5 rounded-md">
                     <Calendar className="w-3 h-3" />
-                    {detailTask.target_date}
+                    {formatDateID(detailTask.target_date)}
+                  </span>
+                )}
+
+                {detailTask.horizon === 'weekly' &&
+                  detailTask.start_date &&
+                  detailTask.target_date && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-slate-600 dark:text-neutral-300 bg-slate-100 dark:bg-neutral-800 px-2.5 py-0.5 rounded-md">
+                      <CalendarRange className="w-3 h-3" />
+                      {formatDateID(detailTask.start_date)} s/d {formatDateID(detailTask.target_date)}
+                    </span>
+                  )}
+
+                {detailTask.horizon === 'monthly' && detailMonthlyRange && (
+                  <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800/60 px-2.5 py-0.5 rounded-md">
+                    <CalendarClock className="w-3 h-3" />
+                    {formatDateID(detailMonthlyRange.start)} s/d{' '}
+                    {formatDateID(detailMonthlyRange.end)}
                   </span>
                 )}
               </div>
@@ -493,6 +579,63 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
                     Tidak ada deskripsi tambahan.
                   </p>
                 )}
+
+                {MULTI_MONTH_HORIZONS.includes(detailTask.horizon) &&
+                  detailTask.target_months?.length > 0 && (
+                    <div className="mt-4 p-3.5 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/25 border border-indigo-200/80 dark:border-indigo-900/50 space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                          Target Bulan ({detailTask.target_months.length})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowMonthDetails((prev) => !prev)}
+                          className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-200 inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>
+                            {showMonthDetails ? 'Sembunyikan detail' : 'Lihat selengkapnya'}
+                          </span>
+                          {showMonthDetails ? (
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          ) : (
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap gap-1.5">
+                        {detailTask.target_months.map((ym) => (
+                          <span
+                            key={ym}
+                            className="text-xs font-medium px-2.5 py-1 rounded-lg bg-white dark:bg-neutral-900 border border-indigo-200/80 dark:border-indigo-800/60 text-slate-700 dark:text-neutral-200"
+                          >
+                            {formatMonthYearID(ym)}
+                          </span>
+                        ))}
+                      </div>
+
+                      {showMonthDetails && (
+                        <div className="pt-2 border-t border-indigo-200/60 dark:border-indigo-900/50 space-y-1.5">
+                          {detailTask.target_months.map((ym) => {
+                            const bounds = getMonthDetailBounds(ym, detailTask, tasks);
+                            return (
+                              <div
+                                key={ym}
+                                className="flex items-center justify-between text-xs bg-white/80 dark:bg-neutral-900/80 px-3 py-2 rounded-lg border border-indigo-100 dark:border-neutral-800"
+                              >
+                                <span className="font-semibold text-slate-700 dark:text-neutral-200">
+                                  {formatMonthYearID(ym)}
+                                </span>
+                                <span className="text-slate-500 dark:text-neutral-400">
+                                  {formatDateID(bounds.start)} s/d {formatDateID(bounds.end)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
               </div>
 
               {detailChildHorizon && detailChildHorizonMeta && (
@@ -527,15 +670,20 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
                               <Circle className="w-4 h-4 text-slate-400 dark:text-neutral-600 shrink-0" />
                             )}
 
-                            <span
-                              className={`text-xs font-medium truncate ${
-                                sub.status === 'done'
-                                  ? 'line-through text-slate-400 dark:text-neutral-500'
-                                  : 'text-slate-800 dark:text-neutral-200'
-                              }`}
-                            >
-                              {sub.title}
-                            </span>
+                            <div className="min-w-0">
+                              <span
+                                className={`text-xs font-medium block truncate ${
+                                  sub.status === 'done'
+                                    ? 'line-through text-slate-400 dark:text-neutral-500'
+                                    : 'text-slate-800 dark:text-neutral-200'
+                                }`}
+                              >
+                                {sub.title}
+                              </span>
+                              <div className="mt-0.5 text-[10px]">
+                                {renderTaskScheduleBadge(sub)}
+                              </div>
+                            </div>
                           </div>
 
                           <span
