@@ -15,7 +15,7 @@ import {
   Trophy,
   X,
 } from 'lucide-react';
-import { HORIZONS, Horizon, Task, formatDateID, formatMonthYearID } from '@/types/task';
+import { HORIZONS, Horizon, Task, formatMonthYearID } from '@/types/task';
 import { CustomSelect, SelectOption } from '@/components/VaultPickers';
 
 const SHORT_MONTHS_ID = [
@@ -47,6 +47,13 @@ const FULL_MONTHS_ID = [
   'November',
   'Desember',
 ];
+
+function formatLocalYMD(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 function getTaskEffectiveYear(task: Task): number {
   if (task.target_date && /^\d{4}/.test(task.target_date)) {
@@ -133,6 +140,8 @@ export default function YearlyRecapModal({
   }));
 
   const recap = useMemo(() => {
+    const todayYMD = formatLocalYMD(new Date());
+
     const tasksInYear = allTasks.filter((t) => {
       const primaryYear = getTaskEffectiveYear(t);
       const hasMonthInYear =
@@ -173,7 +182,7 @@ export default function YearlyRecapModal({
     const bestMonthIdx = monthlyCounts.indexOf(Math.max(...monthlyCounts));
     const hasMonthlyActivity = Math.max(...monthlyCounts) > 0;
 
-    // Rekor Streak Harian di tahun terpilih
+    // Rekor Streak Harian di tahun terpilih (Anti-Backdate: wajib selesai pada hari target_date)
     const completedDailyDates = Array.from(
       new Set(
         completedTasks
@@ -182,14 +191,12 @@ export default function YearlyRecapModal({
               t.horizon !== 'daily' ||
               !t.target_date ||
               !t.updated_at ||
-              !t.target_date.startsWith(`${selectedYear}-`)
+              !t.target_date.startsWith(`${selectedYear}-`) ||
+              t.target_date > todayYMD
             ) {
               return false;
             }
-            const d = new Date(t.updated_at);
-            const completedLocalYMD = `${d.getFullYear()}-${String(
-              d.getMonth() + 1
-            ).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            const completedLocalYMD = formatLocalYMD(new Date(t.updated_at));
             return completedLocalYMD === t.target_date;
           })
           .map((t) => t.target_date!)
@@ -213,7 +220,7 @@ export default function YearlyRecapModal({
     return {
       totalTasks: tasksInYear.length,
       completedCount: completedTasks.length,
-      activeActiveDays: completedDailyDates.length,
+      activeStreakDays: completedDailyDates.length,
       completionRate,
       monthlyCounts,
       maxMonthlyCount,
@@ -234,20 +241,20 @@ export default function YearlyRecapModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden"
+        className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden"
       >
         {/* Header Modal */}
-        <div className="px-5 sm:px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-gradient-to-r from-emerald-50/70 via-white to-amber-50/50 dark:from-emerald-950/30 dark:via-neutral-900 dark:to-amber-950/20">
+        <div className="px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-gradient-to-r from-emerald-50/70 via-white to-amber-50/50 dark:from-emerald-950/30 dark:via-neutral-900 dark:to-amber-950/20">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald-600/10 dark:bg-emerald-500/15 border border-emerald-600/25 dark:border-emerald-500/30 flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <div className="w-10 h-10 rounded-xl bg-emerald-600/10 dark:bg-emerald-500/15 border border-emerald-600/25 dark:border-emerald-500/30 flex items-center justify-center">
+              <Sparkles className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
             </div>
             <div>
-              <h2 className="text-base font-bold leading-none">
+              <h2 className="text-base sm:text-lg font-bold leading-none">
                 Rekap Perjalanan {selectedYear}
               </h2>
-              <p className="text-[11px] text-slate-500 dark:text-neutral-400 mt-1">
-                Kilas balik seluruh pencapaian dan konsistensi tugas di Vlow App
+              <p className="text-xs text-slate-500 dark:text-neutral-400 mt-1">
+                Kilas balik seluruh pencapaian dan konsistensi tugas di Vlow Vault
               </p>
             </div>
           </div>
@@ -259,7 +266,7 @@ export default function YearlyRecapModal({
               value={String(selectedYear)}
               onChange={(val) => setSelectedYear(Number(val))}
               options={yearOptions}
-              className="w-32"
+              className="w-36"
             />
             <button
               onClick={onClose}
@@ -271,12 +278,12 @@ export default function YearlyRecapModal({
         </div>
 
         {/* Konten Rekap */}
-        <div className="p-5 sm:p-6 overflow-y-auto space-y-6">
+        <div className="p-6 sm:p-7 overflow-y-auto space-y-6">
           {/* 4 Kartu Statistik Utama */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-3.5 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/25 border border-emerald-200/70 dark:border-emerald-800/50">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+            <div className="p-4 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/25 border border-emerald-200/70 dark:border-emerald-800/50">
               <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-400 mb-1.5">
-                <span className="text-[11px] font-semibold">Tugas Tuntas</span>
+                <span className="text-xs font-semibold">Tugas Tuntas</span>
                 <CheckCircle2 className="w-4 h-4" />
               </div>
               <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
@@ -287,9 +294,9 @@ export default function YearlyRecapModal({
               </div>
             </div>
 
-            <div className="p-3.5 rounded-2xl bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200/70 dark:border-amber-800/50">
+            <div className="p-4 rounded-2xl bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200/70 dark:border-amber-800/50">
               <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 mb-1.5">
-                <span className="text-[11px] font-semibold">Rekor Streak</span>
+                <span className="text-xs font-semibold">Rekor Streak</span>
                 <Flame className="w-4 h-4" />
               </div>
               <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
@@ -299,13 +306,13 @@ export default function YearlyRecapModal({
                 </span>
               </div>
               <div className="text-[11px] text-slate-500 dark:text-neutral-400 mt-0.5">
-                {recap.activeActiveDays} hari produktif
+                {recap.activeStreakDays} hari tepat waktu
               </div>
             </div>
 
-            <div className="p-3.5 rounded-2xl bg-indigo-50/60 dark:bg-indigo-950/25 border border-indigo-200/70 dark:border-indigo-800/50">
+            <div className="p-4 rounded-2xl bg-indigo-50/60 dark:bg-indigo-950/25 border border-indigo-200/70 dark:border-indigo-800/50">
               <div className="flex items-center justify-between text-indigo-600 dark:text-indigo-400 mb-1.5">
-                <span className="text-[11px] font-semibold">Target Besar</span>
+                <span className="text-xs font-semibold">Target Besar</span>
                 <Trophy className="w-4 h-4" />
               </div>
               <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
@@ -316,9 +323,9 @@ export default function YearlyRecapModal({
               </div>
             </div>
 
-            <div className="p-3.5 rounded-2xl bg-sky-50/60 dark:bg-sky-950/25 border border-sky-200/70 dark:border-sky-800/50">
+            <div className="p-4 rounded-2xl bg-sky-50/60 dark:bg-sky-950/25 border border-sky-200/70 dark:border-sky-800/50">
               <div className="flex items-center justify-between text-sky-600 dark:text-sky-400 mb-1.5">
-                <span className="text-[11px] font-semibold">Bulan Terbaik</span>
+                <span className="text-xs font-semibold">Bulan Terbaik</span>
                 <TrendingUp className="w-4 h-4" />
               </div>
               <div className="text-lg font-extrabold text-slate-900 dark:text-white truncate">
@@ -331,7 +338,7 @@ export default function YearlyRecapModal({
           </div>
 
           {/* Grafik Aktivitas Bulanan */}
-          <div className="p-4 rounded-2xl bg-slate-50/80 dark:bg-neutral-950/70 border border-slate-200/80 dark:border-neutral-800/80">
+          <div className="p-5 rounded-2xl bg-slate-50/80 dark:bg-neutral-950/70 border border-slate-200/80 dark:border-neutral-800/80">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-emerald-500" />
@@ -339,12 +346,12 @@ export default function YearlyRecapModal({
                   Aktivitas Penyelesaian per Bulan ({selectedYear})
                 </h3>
               </div>
-              <span className="text-[11px] text-slate-400 dark:text-neutral-500">
+              <span className="text-xs text-slate-400 dark:text-neutral-500">
                 Total: {recap.completedCount} selesai
               </span>
             </div>
 
-            <div className="grid grid-cols-12 gap-1.5 sm:gap-2.5 items-end h-32 pt-4 px-1">
+            <div className="grid grid-cols-12 gap-2 sm:gap-3 items-end h-36 pt-4 px-1">
               {recap.monthlyCounts.map((count, idx) => {
                 const heightPct =
                   count > 0 ? Math.max(14, Math.round((count / recap.maxMonthlyCount) * 100)) : 6;
@@ -354,7 +361,7 @@ export default function YearlyRecapModal({
                     className="flex flex-col items-center gap-1.5 h-full justify-end group"
                   >
                     <span
-                      className={`text-[10px] font-bold transition-opacity ${
+                      className={`text-[11px] font-bold transition-opacity ${
                         count > 0
                           ? 'text-emerald-600 dark:text-emerald-400'
                           : 'text-slate-300 dark:text-neutral-700'
@@ -373,7 +380,7 @@ export default function YearlyRecapModal({
                         }`}
                       />
                     </div>
-                    <span className="text-[10px] font-medium text-slate-500 dark:text-neutral-400">
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-neutral-400">
                       {SHORT_MONTHS_ID[idx]}
                     </span>
                   </div>
@@ -385,7 +392,7 @@ export default function YearlyRecapModal({
           {/* Grid 2 Kolom: Pencapaian Besar & Rincian per Horizon */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Sorotan Pencapaian Jangka Menengah & Panjang */}
-            <div className="p-4 rounded-2xl bg-slate-50/80 dark:bg-neutral-950/70 border border-slate-200/80 dark:border-neutral-800/80 space-y-3">
+            <div className="p-5 rounded-2xl bg-slate-50/80 dark:bg-neutral-950/70 border border-slate-200/80 dark:border-neutral-800/80 space-y-3">
               <div className="flex items-center gap-2">
                 <Award className="w-4 h-4 text-amber-500" />
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-neutral-300">
@@ -394,7 +401,7 @@ export default function YearlyRecapModal({
               </div>
 
               {recap.majorMilestones.length > 0 ? (
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
                   {recap.majorMilestones.map((item) => {
                     const HorizonIcon =
                       item.horizon === 'yearly'
@@ -408,7 +415,7 @@ export default function YearlyRecapModal({
                     return (
                       <div
                         key={item.id}
-                        className="p-2.5 rounded-xl bg-white dark:bg-neutral-900 border border-slate-200/80 dark:border-neutral-800 flex items-start gap-2.5"
+                        className="p-3 rounded-xl bg-white dark:bg-neutral-900 border border-slate-200/80 dark:border-neutral-800 flex items-start gap-2.5"
                       >
                         <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 mt-0.5">
                           <HorizonIcon className="w-3.5 h-3.5" />
@@ -433,14 +440,14 @@ export default function YearlyRecapModal({
                   })}
                 </div>
               ) : (
-                <div className="py-8 text-center text-xs text-slate-400 dark:text-neutral-500 border border-dashed border-slate-200 dark:border-neutral-800 rounded-xl">
+                <div className="py-10 text-center text-xs text-slate-400 dark:text-neutral-500 border border-dashed border-slate-200 dark:border-neutral-800 rounded-xl">
                   Belum ada target Kuartal, 6 Bulanan, atau Tahunan yang selesai di {selectedYear}.
                 </div>
               )}
             </div>
 
             {/* Rincian Penyelesaian per Horizon */}
-            <div className="p-4 rounded-2xl bg-slate-50/80 dark:bg-neutral-950/70 border border-slate-200/80 dark:border-neutral-800/80 space-y-3">
+            <div className="p-5 rounded-2xl bg-slate-50/80 dark:bg-neutral-950/70 border border-slate-200/80 dark:border-neutral-800/80 space-y-3">
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-sky-500" />
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-neutral-300">
@@ -448,7 +455,7 @@ export default function YearlyRecapModal({
                 </h3>
               </div>
 
-              <div className="space-y-2.5">
+              <div className="space-y-3">
                 {recap.byHorizon.map((h) => {
                   const pct = h.total > 0 ? Math.round((h.done / h.total) * 100) : 0;
                   return (

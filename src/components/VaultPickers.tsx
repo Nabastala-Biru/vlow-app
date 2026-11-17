@@ -7,9 +7,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  X,
 } from 'lucide-react';
-import { formatDateID, formatMonthYearID } from '@/types/task';
 
 export interface SelectOption {
   value: string;
@@ -19,157 +17,7 @@ export interface SelectOption {
   disabled?: boolean;
 }
 
-interface CustomSelectProps {
-  value: string;
-  onChange: (value: string) => void;
-  options: SelectOption[];
-  placeholder?: string;
-  disabled?: boolean;
-  size?: 'sm' | 'md';
-  className?: string;
-  menuClassName?: string;
-  align?: 'left' | 'right';
-}
-
-export function CustomSelect({
-  value,
-  onChange,
-  options,
-  placeholder = 'Pilih opsi...',
-  disabled = false,
-  size = 'md',
-  className = '',
-  menuClassName = '',
-  align = 'left',
-}: CustomSelectProps) {
-  const [open, setOpen] = useState(false);
-  const [openUpward, setOpenUpward] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const selectedOption = options.find((opt) => opt.value === value);
-
-  useEffect(() => {
-    if (!open) return;
-
-    if (containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUpward(spaceBelow < 250 && rect.top > 250);
-    }
-
-    function handleClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-
-    function handleEscape(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleEscape, true);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleEscape, true);
-    };
-  }, [open]);
-
-  const sizeClasses =
-    size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-3.5 py-2.5 text-sm';
-
-  return (
-    <div ref={containerRef} className={`relative ${className}`}>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => !disabled && setOpen((prev) => !prev)}
-        className={`w-full flex items-center justify-between gap-2 text-left bg-slate-50 dark:bg-neutral-950 border rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${sizeClasses} ${
-          open
-            ? 'border-emerald-500 ring-2 ring-emerald-500/15 bg-white dark:bg-neutral-900'
-            : 'border-slate-200 dark:border-neutral-800 hover:border-slate-300 dark:hover:border-neutral-700'
-        }`}
-      >
-        <span className="flex items-center gap-2 min-w-0 truncate">
-          {selectedOption?.dotClass && (
-            <span
-              className={`w-2 h-2 rounded-full shrink-0 ${selectedOption.dotClass}`}
-            />
-          )}
-          <span
-            className={`truncate ${
-              selectedOption
-                ? 'text-slate-800 dark:text-neutral-100 font-medium'
-                : 'text-slate-400 dark:text-neutral-500'
-            }`}
-          >
-            {selectedOption ? selectedOption.label : placeholder}
-          </span>
-        </span>
-
-        <ChevronDown
-          className={`w-3.5 h-3.5 text-slate-400 dark:text-neutral-500 shrink-0 transition-transform duration-200 ${
-            open ? 'rotate-180 text-emerald-500' : ''
-          }`}
-        />
-      </button>
-
-      {open && (
-        <div
-          className={`absolute z-50 min-w-full w-max max-w-[min(90vw,22rem)] bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-xl shadow-slate-900/10 dark:shadow-black/50 py-1.5 max-h-60 overflow-y-auto ${
-            openUpward ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
-          } ${align === 'right' ? 'right-0' : 'left-0'} ${menuClassName}`}
-        >
-          {options.map((opt) => {
-            const isSelected = opt.value === value;
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                disabled={opt.disabled}
-                onClick={() => {
-                  if (opt.disabled) return;
-                  onChange(opt.value);
-                  setOpen(false);
-                }}
-                className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2.5 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
-                  isSelected
-                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 font-semibold'
-                    : 'text-slate-700 dark:text-neutral-200 hover:bg-slate-100/80 dark:hover:bg-neutral-800/80'
-                }`}
-              >
-                <div className="flex items-start gap-2 min-w-0">
-                  {opt.dotClass && (
-                    <span
-                      className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${opt.dotClass}`}
-                    />
-                  )}
-                  <div className="min-w-0">
-                    <div className="text-xs leading-snug truncate">{opt.label}</div>
-                    {opt.sublabel && (
-                      <div className="text-[10px] text-slate-400 dark:text-neutral-500 truncate mt-0.5">
-                        {opt.sublabel}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {isSelected && (
-                  <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const MONTH_NAMES_ID = [
+const MONTHS_ID = [
   'Januari',
   'Februari',
   'Maret',
@@ -184,7 +32,7 @@ const MONTH_NAMES_ID = [
   'Desember',
 ];
 
-const SHORT_MONTH_NAMES_ID = [
+const SHORT_MONTHS_ID = [
   'Jan',
   'Feb',
   'Mar',
@@ -199,89 +47,217 @@ const SHORT_MONTH_NAMES_ID = [
   'Des',
 ];
 
-const DAY_HEADERS_ID = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+const DAYS_HEADER_ID = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
 
-function toYMD(year: number, monthIndex: number, day: number): string {
-  const m = String(monthIndex + 1).padStart(2, '0');
-  const d = String(day).padStart(2, '0');
-  return `${year}-${m}-${d}`;
+function formatDisplayDate(ymd: string): string {
+  if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return '';
+  const [y, m, d] = ymd.split('-');
+  return `${d}-${m}-${y}`;
 }
 
-function parseYMD(value: string): { year: number; month: number; day: number } | null {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const [y, m, d] = value.split('-').map(Number);
-  return { year: y, month: m - 1, day: d };
+function formatDisplayMonth(ym: string): string {
+  if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return '';
+  const [y, m] = ym.split('-');
+  const idx = Number(m) - 1;
+  return `${MONTHS_ID[idx] || m} ${y}`;
 }
 
-interface CustomDatePickerProps {
+export function CustomSelect({
+  value,
+  onChange,
+  options,
+  placeholder = 'Pilih opsi...',
+  size = 'md',
+  align = 'left',
+  className = '',
+}: {
   value: string;
-  onChange: (value: string) => void;
+  onChange: (val: string) => void;
+  options: SelectOption[];
   placeholder?: string;
-  required?: boolean;
-  min?: string;
   size?: 'sm' | 'md';
+  align?: 'left' | 'right';
   className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [open]);
+
+  const selected = options.find((o) => o.value === value);
+
+  return (
+    <div ref={containerRef} className={`relative ${className}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className={`w-full flex items-center justify-between gap-2 bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 hover:border-emerald-500/60 rounded-xl text-left transition-colors cursor-pointer ${
+          size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-3.5 py-2.5 text-sm'
+        }`}
+      >
+        <span className="flex items-center gap-2 min-w-0 truncate">
+          {selected?.dotClass && (
+            <span className={`w-2 h-2 rounded-full shrink-0 ${selected.dotClass}`} />
+          )}
+          <span
+            className={`truncate ${
+              selected
+                ? 'text-slate-800 dark:text-neutral-100 font-medium'
+                : 'text-slate-400 dark:text-neutral-500'
+            }`}
+          >
+            {selected ? selected.label : placeholder}
+          </span>
+        </span>
+        <ChevronDown
+          className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform ${
+            open ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
+
+      {open && (
+        <div
+          className={`absolute z-50 mt-1.5 min-w-full w-64 max-h-60 overflow-y-auto rounded-xl bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 shadow-xl p-1.5 space-y-0.5 ${
+            align === 'right' ? 'right-0' : 'left-0'
+          }`}
+        >
+          {options.map((opt) => {
+            const isSelected = opt.value === value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                disabled={opt.disabled}
+                onClick={() => {
+                  if (opt.disabled) return;
+                  onChange(opt.value);
+                  setOpen(false);
+                }}
+                className={`w-full px-2.5 py-2 rounded-lg text-left flex items-center justify-between gap-2 transition-colors ${
+                  opt.disabled
+                    ? 'opacity-45 cursor-not-allowed'
+                    : isSelected
+                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 font-semibold cursor-pointer'
+                    : 'text-slate-700 hover:bg-slate-100 dark:text-neutral-200 dark:hover:bg-neutral-800 cursor-pointer'
+                }`}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    {opt.dotClass && (
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${opt.dotClass}`} />
+                    )}
+                    <span className="text-xs truncate">{opt.label}</span>
+                  </div>
+                  {opt.sublabel && (
+                    <p className="text-[10px] text-slate-400 dark:text-neutral-500 truncate mt-0.5 pl-4">
+                      {opt.sublabel}
+                    </p>
+                  )}
+                </div>
+                {isSelected && <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function CustomDatePicker({
   value,
   onChange,
-  placeholder = 'Pilih tanggal...',
-  required = false,
   min,
+  required,
   size = 'md',
+  align = 'left',
   className = '',
-}: CustomDatePickerProps) {
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  min?: string;
+  required?: boolean;
+  size?: 'sm' | 'md';
+  align?: 'left' | 'right';
+  className?: string;
+}) {
   const [open, setOpen] = useState(false);
-  const [openUpward, setOpenUpward] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const now = new Date();
-  const todayStr = toYMD(now.getFullYear(), now.getMonth(), now.getDate());
-  const parsed = parseYMD(value);
+  const initialDate = value && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? new Date(`${value}T00:00:00`)
+    : new Date();
 
-  const [viewYear, setViewYear] = useState<number>(parsed?.year ?? now.getFullYear());
-  const [viewMonth, setViewMonth] = useState<number>(parsed?.month ?? now.getMonth());
+  const [viewYear, setViewYear] = useState(initialDate.getFullYear());
+  const [viewMonth, setViewMonth] = useState(initialDate.getMonth());
 
   useEffect(() => {
-    const p = parseYMD(value);
-    if (p) {
-      setViewYear(p.year);
-      setViewMonth(p.month);
+    if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const d = new Date(`${value}T00:00:00`);
+      setViewYear(d.getFullYear());
+      setViewMonth(d.getMonth());
     }
   }, [value]);
 
   useEffect(() => {
-    if (!open) return;
-
-    if (containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUpward(spaceBelow < 330 && rect.top > 330);
-    }
-
-    function handleClickOutside(e: MouseEvent) {
+    function handleOutside(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     }
-
-    function handleEscape(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleEscape, true);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleEscape, true);
-    };
+    if (open) document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
   }, [open]);
 
-  function prevMonth() {
+  const firstDayOfMonth = new Date(viewYear, viewMonth, 1).getDay();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const prevMonthDays = new Date(viewYear, viewMonth, 0).getDate();
+
+  const calendarCells: { dateStr: string; dayNum: number; isCurrentMonth: boolean }[] = [];
+
+  for (let i = firstDayOfMonth - 1; i >= 0; i--) {
+    const d = prevMonthDays - i;
+    const m = viewMonth === 0 ? 12 : viewMonth;
+    const y = viewMonth === 0 ? viewYear - 1 : viewYear;
+    calendarCells.push({
+      dateStr: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+      dayNum: d,
+      isCurrentMonth: false,
+    });
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    calendarCells.push({
+      dateStr: `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(d).padStart(
+        2,
+        '0'
+      )}`,
+      dayNum: d,
+      isCurrentMonth: true,
+    });
+  }
+
+  const remaining = 42 - calendarCells.length;
+  for (let d = 1; d <= remaining; d++) {
+    const m = viewMonth === 11 ? 1 : viewMonth + 2;
+    const y = viewMonth === 11 ? viewYear + 1 : viewYear;
+    calendarCells.push({
+      dateStr: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+      dayNum: d,
+      isCurrentMonth: false,
+    });
+  }
+
+  function handlePrevMonth() {
     if (viewMonth === 0) {
       setViewMonth(11);
       setViewYear((y) => y - 1);
@@ -290,7 +266,7 @@ export function CustomDatePicker({
     }
   }
 
-  function nextMonth() {
+  function handleNextMonth() {
     if (viewMonth === 11) {
       setViewMonth(0);
       setViewYear((y) => y + 1);
@@ -299,320 +275,208 @@ export function CustomDatePicker({
     }
   }
 
-  const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
-  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
-  const daysInPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
-
-  const calendarCells: {
-    ymd: string;
-    day: number;
-    isCurrentMonth: boolean;
-  }[] = [];
-
-  for (let i = firstDayOfWeek - 1; i >= 0; i--) {
-    const day = daysInPrevMonth - i;
-    const prevM = viewMonth === 0 ? 11 : viewMonth - 1;
-    const prevY = viewMonth === 0 ? viewYear - 1 : viewYear;
-    calendarCells.push({
-      ymd: toYMD(prevY, prevM, day),
-      day,
-      isCurrentMonth: false,
-    });
-  }
-
-  for (let day = 1; day <= daysInMonth; day++) {
-    calendarCells.push({
-      ymd: toYMD(viewYear, viewMonth, day),
-      day,
-      isCurrentMonth: true,
-    });
-  }
-
-  const remaining = 42 - calendarCells.length;
-  for (let day = 1; day <= remaining; day++) {
-    const nextM = viewMonth === 11 ? 0 : viewMonth + 1;
-    const nextY = viewMonth === 11 ? viewYear + 1 : viewYear;
-    calendarCells.push({
-      ymd: toYMD(nextY, nextM, day),
-      day,
-      isCurrentMonth: false,
-    });
-  }
-
-  const sizeClasses =
-    size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-3.5 py-2.5 text-sm';
-
   return (
     <div ref={containerRef} className={`relative ${className}`}>
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className={`w-full flex items-center justify-between gap-2 text-left bg-slate-50 dark:bg-neutral-950 border rounded-xl transition-all cursor-pointer ${sizeClasses} ${
+        className={`w-full flex items-center justify-between gap-2 bg-slate-50 dark:bg-neutral-950 border rounded-xl text-left transition-colors cursor-pointer ${
           open
-            ? 'border-emerald-500 ring-2 ring-emerald-500/15 bg-white dark:bg-neutral-900'
-            : 'border-slate-200 dark:border-neutral-800 hover:border-slate-300 dark:hover:border-neutral-700'
-        }`}
+            ? 'border-emerald-500 ring-2 ring-emerald-500/15'
+            : 'border-slate-200 dark:border-neutral-800 hover:border-emerald-500/60'
+        } ${size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-3.5 py-2.5 text-sm'}`}
       >
         <span
-          className={`truncate ${
+          className={
             value
               ? 'text-slate-800 dark:text-neutral-100 font-medium'
               : 'text-slate-400 dark:text-neutral-500'
-          }`}
+          }
         >
-          {value ? formatDateID(value) : placeholder}
+          {value ? formatDisplayDate(value) : 'Pilih tanggal...'}
         </span>
-
-        <div className="flex items-center gap-1 shrink-0">
-          {value && !required && (
-            <span
-              role="button"
-              tabIndex={-1}
-              onClick={(e) => {
-                e.stopPropagation();
-                onChange('');
-              }}
-              className="p-0.5 text-slate-400 hover:text-rose-500 rounded"
-            >
-              <X className="w-3 h-3" />
-            </span>
-          )}
-          <Calendar
-            className={`w-3.5 h-3.5 transition-colors ${
-              open ? 'text-emerald-500' : 'text-slate-400 dark:text-neutral-500'
-            }`}
-          />
-        </div>
+        <Calendar className="w-4 h-4 text-emerald-500 shrink-0" />
       </button>
 
       {open && (
         <div
-          className={`absolute z-50 w-72 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl shadow-2xl shadow-slate-900/15 dark:shadow-black/60 p-3.5 left-0 ${
-            openUpward ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
+          className={`absolute z-50 mt-1.5 w-72 rounded-2xl bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 shadow-2xl p-3.5 ${
+            align === 'right' ? 'right-0' : 'left-0'
           }`}
         >
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-bold text-slate-800 dark:text-neutral-100 px-1">
-              {MONTH_NAMES_ID[viewMonth]} {viewYear}
+            <span className="text-xs font-bold text-slate-800 dark:text-neutral-100">
+              {MONTHS_ID[viewMonth]} {viewYear}
             </span>
-
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={prevMonth}
-                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-neutral-400 dark:hover:text-white dark:hover:bg-neutral-800 transition-colors cursor-pointer"
-                title="Bulan sebelumnya"
+                onClick={handlePrevMonth}
+                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-500 dark:text-neutral-400 cursor-pointer"
               >
-                <ChevronLeft className="w-3.5 h-3.5" />
+                <ChevronLeft className="w-4 h-4" />
               </button>
               <button
                 type="button"
-                onClick={nextMonth}
-                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-neutral-400 dark:hover:text-white dark:hover:bg-neutral-800 transition-colors cursor-pointer"
-                title="Bulan berikutnya"
+                onClick={handleNextMonth}
+                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-500 dark:text-neutral-400 cursor-pointer"
               >
-                <ChevronRight className="w-3.5 h-3.5" />
+                <ChevronRight className="w-4 h-4" />
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-7 gap-1 mb-1">
-            {DAY_HEADERS_ID.map((d) => (
-              <div
-                key={d}
-                className="text-center text-[10px] font-semibold text-slate-400 dark:text-neutral-500 py-1"
+          <div className="grid grid-cols-7 gap-1 text-center mb-1.5">
+            {DAYS_HEADER_ID.map((day) => (
+              <span
+                key={day}
+                className="text-[10px] font-bold text-slate-400 dark:text-neutral-500"
               >
-                {d}
-              </div>
+                {day}
+              </span>
             ))}
           </div>
 
-          <div className="grid grid-cols-7 gap-1">
+          <div className="grid grid-cols-7 gap-1 text-center">
             {calendarCells.map((cell) => {
-              const isSelected = cell.ymd === value;
-              const isToday = cell.ymd === todayStr;
-              const isDisabled = Boolean(min && cell.ymd < min);
+              const isSelected = cell.dateStr === value;
+              const isDisabled = Boolean(min && cell.dateStr < min);
 
               return (
                 <button
-                  key={cell.ymd}
+                  key={cell.dateStr}
                   type="button"
                   disabled={isDisabled}
                   onClick={() => {
-                    onChange(cell.ymd);
+                    if (isDisabled) return;
+                    onChange(cell.dateStr);
                     setOpen(false);
                   }}
-                  className={`h-8 rounded-lg text-xs flex items-center justify-center transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${
-                    isSelected
-                      ? 'bg-emerald-600 text-white font-bold shadow-xs shadow-emerald-600/30'
-                      : isToday
-                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 font-semibold ring-1 ring-emerald-500/40'
+                  className={`h-8 rounded-lg text-xs flex items-center justify-center transition-colors ${
+                    isDisabled
+                      ? 'text-slate-300 dark:text-neutral-700 cursor-not-allowed'
+                      : isSelected
+                      ? 'bg-emerald-600 text-white font-bold shadow-xs cursor-pointer'
                       : cell.isCurrentMonth
-                      ? 'text-slate-700 dark:text-neutral-200 hover:bg-slate-100 dark:hover:bg-neutral-800'
-                      : 'text-slate-400/70 dark:text-neutral-600 hover:bg-slate-50 dark:hover:bg-neutral-800/50'
+                      ? 'text-slate-700 dark:text-neutral-200 hover:bg-slate-100 dark:hover:bg-neutral-800 font-medium cursor-pointer'
+                      : 'text-slate-400 dark:text-neutral-600 hover:bg-slate-100 dark:hover:bg-neutral-800 cursor-pointer'
                   }`}
                 >
-                  {cell.day}
+                  {cell.dayNum}
                 </button>
               );
             })}
           </div>
 
-          <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-neutral-800 flex items-center justify-between text-[11px]">
-            {!required ? (
+          {required && (
+            <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-neutral-800 flex items-center justify-between text-[10px] text-slate-400 dark:text-neutral-500">
+              <span>Wajib diisi</span>
               <button
                 type="button"
                 onClick={() => {
-                  onChange('');
-                  setOpen(false);
+                  const now = new Date();
+                  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+                    2,
+                    '0'
+                  )}-${String(now.getDate()).padStart(2, '0')}`;
+                  if (!min || todayStr >= min) {
+                    onChange(todayStr);
+                    setOpen(false);
+                  }
                 }}
-                className="font-medium text-slate-500 hover:text-rose-600 dark:text-neutral-400 dark:hover:text-rose-400 px-1.5 py-0.5 rounded cursor-pointer"
+                className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline cursor-pointer"
               >
-                Hapus
+                Hari Ini
               </button>
-            ) : (
-              <span className="text-[10px] text-slate-400 dark:text-neutral-500">
-                Wajib diisi
-              </span>
-            )}
-
-            <button
-              type="button"
-              onClick={() => {
-                onChange(todayStr);
-                setViewYear(now.getFullYear());
-                setViewMonth(now.getMonth());
-                setOpen(false);
-              }}
-              className="font-semibold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 px-2 py-0.5 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors cursor-pointer"
-            >
-              Hari Ini
-            </button>
-          </div>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-interface CustomMonthPickerProps {
-  value: string; // YYYY-MM
-  onChange: (value: string) => void;
-  size?: 'sm' | 'md';
-  className?: string;
-}
-
 export function CustomMonthPicker({
   value,
   onChange,
   size = 'md',
+  align = 'left',
   className = '',
-}: CustomMonthPickerProps) {
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  size?: 'sm' | 'md';
+  align?: 'left' | 'right';
+  className?: string;
+}) {
   const [open, setOpen] = useState(false);
-  const [openUpward, setOpenUpward] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const now = new Date();
-  const [selectedYearStr, selectedMonthStr] = (value || '').split('-');
-  const parsedYear = Number(selectedYearStr) || now.getFullYear();
-  const parsedMonthIndex = (Number(selectedMonthStr) || now.getMonth() + 1) - 1;
-
-  const [displayYear, setDisplayYear] = useState<number>(parsedYear);
+  const initialYear =
+    value && /^\d{4}-\d{2}$/.test(value) ? Number(value.slice(0, 4)) : new Date().getFullYear();
+  const [viewYear, setViewYear] = useState(initialYear);
 
   useEffect(() => {
-    if (selectedYearStr) {
-      setDisplayYear(Number(selectedYearStr));
+    if (value && /^\d{4}-\d{2}$/.test(value)) {
+      setViewYear(Number(value.slice(0, 4)));
     }
-  }, [selectedYearStr]);
+  }, [value]);
 
   useEffect(() => {
-    if (!open) return;
-
-    if (containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUpward(spaceBelow < 240 && rect.top > 240);
-    }
-
-    function handleClickOutside(e: MouseEvent) {
+    function handleOutside(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     }
-
-    function handleEscape(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleEscape, true);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleEscape, true);
-    };
+    if (open) document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
   }, [open]);
-
-  const sizeClasses =
-    size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-3.5 py-2 text-sm';
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className={`w-full flex items-center justify-between gap-2 text-left bg-slate-50 dark:bg-neutral-950 border rounded-xl transition-all cursor-pointer ${sizeClasses} ${
-          open
-            ? 'border-emerald-500 ring-2 ring-emerald-500/15 bg-white dark:bg-neutral-900'
-            : 'border-slate-200 dark:border-neutral-800 hover:border-slate-300 dark:hover:border-neutral-700'
+        className={`w-full flex items-center justify-between gap-2 bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 hover:border-indigo-500/60 rounded-xl text-left transition-colors cursor-pointer ${
+          size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-3.5 py-2 text-sm'
         }`}
       >
-        <span className="truncate font-medium text-slate-800 dark:text-neutral-100">
-          {value ? formatMonthYearID(value) : 'Pilih bulan...'}
+        <span className="text-slate-800 dark:text-neutral-100 font-medium truncate">
+          {value ? formatDisplayMonth(value) : 'Pilih bulan...'}
         </span>
-        <Calendar
-          className={`w-3.5 h-3.5 shrink-0 transition-colors ${
-            open ? 'text-emerald-500' : 'text-slate-400 dark:text-neutral-500'
-          }`}
-        />
+        <Calendar className="w-4 h-4 text-indigo-500 shrink-0" />
       </button>
 
       {open && (
         <div
-          className={`absolute z-50 w-64 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl shadow-2xl shadow-slate-900/15 dark:shadow-black/60 p-3.5 left-0 ${
-            openUpward ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
+          className={`absolute z-50 mt-1.5 w-64 rounded-2xl bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 shadow-2xl p-3.5 ${
+            align === 'right' ? 'right-0' : 'left-0'
           }`}
         >
           <div className="flex items-center justify-between mb-3">
             <button
               type="button"
-              onClick={() => setDisplayYear((y) => y - 1)}
-              className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-neutral-400 dark:hover:text-white dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              onClick={() => setViewYear((y) => y - 1)}
+              className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-500 cursor-pointer"
             >
-              <ChevronLeft className="w-3.5 h-3.5" />
+              <ChevronLeft className="w-4 h-4" />
             </button>
-
             <span className="text-xs font-bold text-slate-800 dark:text-neutral-100">
-              {displayYear}
+              {viewYear}
             </span>
-
             <button
               type="button"
-              onClick={() => setDisplayYear((y) => y + 1)}
-              className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-neutral-400 dark:hover:text-white dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              onClick={() => setViewYear((y) => y + 1)}
+              className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-500 cursor-pointer"
             >
-              <ChevronRight className="w-3.5 h-3.5" />
+              <ChevronRight className="w-4 h-4" />
             </button>
           </div>
 
           <div className="grid grid-cols-3 gap-1.5">
-            {SHORT_MONTH_NAMES_ID.map((mName, idx) => {
-              const ym = `${displayYear}-${String(idx + 1).padStart(2, '0')}`;
-              const isSelected =
-                displayYear === parsedYear && idx === parsedMonthIndex;
-
+            {SHORT_MONTHS_ID.map((mLabel, idx) => {
+              const ym = `${viewYear}-${String(idx + 1).padStart(2, '0')}`;
+              const isSelected = ym === value;
               return (
                 <button
                   key={ym}
@@ -621,13 +485,13 @@ export function CustomMonthPicker({
                     onChange(ym);
                     setOpen(false);
                   }}
-                  className={`py-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+                  className={`py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                     isSelected
-                      ? 'bg-emerald-600 text-white font-semibold shadow-xs shadow-emerald-600/30'
+                      ? 'bg-indigo-600 text-white font-bold'
                       : 'text-slate-700 dark:text-neutral-300 hover:bg-slate-100 dark:hover:bg-neutral-800'
                   }`}
                 >
-                  {mName}
+                  {mLabel}
                 </button>
               );
             })}

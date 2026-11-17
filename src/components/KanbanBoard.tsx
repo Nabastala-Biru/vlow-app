@@ -25,6 +25,7 @@ import {
   X,
   Layers,
   AlertCircle,
+  AlertTriangle,
   Share2,
   Copy,
   Check,
@@ -309,7 +310,6 @@ function SwipeableTaskCard({
 
   return (
     <div className="relative rounded-xl overflow-hidden select-none md:select-auto">
-      {/* Background Indikator Geser Mobile */}
       <div
         className={`md:hidden absolute inset-0 rounded-xl flex items-center justify-between px-4 transition-colors ${
           offsetX > 12 && canSwipeRight
@@ -344,7 +344,6 @@ function SwipeableTaskCard({
         </div>
       </div>
 
-      {/* Kartu Utama */}
       <div
         draggable
         onDragStart={onDragStart}
@@ -456,6 +455,13 @@ function SwipeableTaskCard({
   );
 }
 
+interface DeleteConfirmTarget {
+  id: string;
+  title: string;
+  childCount: number;
+  isArchived?: boolean;
+}
+
 export default function KanbanBoard({
   initialTasks,
   initialAllTasks,
@@ -482,6 +488,9 @@ export default function KanbanBoard({
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
+
+  // Delete Confirmation Modal state
+  const [deleteTarget, setDeleteTarget] = useState<DeleteConfirmTarget | null>(null);
 
   // Archive & Analytics state
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
@@ -522,7 +531,10 @@ export default function KanbanBoard({
   const [monthPicker, setMonthPicker] = useState(getCurrentMonthString());
   const [formError, setFormError] = useState('');
 
-  // Fallback: jika initialAllTasks tidak dikirim dari page.tsx, ambil arsip di latar belakang
+  useEffect(() => {
+    setTasks(initialTasks);
+  }, [initialTasks]);
+
   useEffect(() => {
     if (!initialAllTasks) {
       getArchivedTasks()
@@ -554,6 +566,10 @@ export default function KanbanBoard({
         target.tagName === 'SELECT';
 
       if (e.key === 'Escape') {
+        if (deleteTarget) {
+          setDeleteTarget(null);
+          return;
+        }
         setDetailTaskId(null);
         setIsFormModalOpen(false);
         setIsShareModalOpen(false);
@@ -565,6 +581,7 @@ export default function KanbanBoard({
 
       if (
         isTyping ||
+        deleteTarget ||
         isFormModalOpen ||
         isShareModalOpen ||
         isArchiveModalOpen ||
@@ -595,7 +612,7 @@ export default function KanbanBoard({
     return Array.from(map.values());
   }, [tasks, archivedTasks]);
 
-  // Perhitungan Daily Streak (Opsi A: minimal 1 tugas harian selesai pada hari itu)
+  // Perhitungan Daily Streak (Opsi A + Anti-Backdate)
   const streakStats = useMemo(() => {
     const today = getTodayDateString();
     const yesterday = shiftDateYMD(today, -1);
@@ -609,7 +626,6 @@ export default function KanbanBoard({
 
     const todayDone = completedDailyDatesSet.has(today);
 
-    // Hitung current streak
     let currentStreak = 0;
     let cursor = todayDone ? today : completedDailyDatesSet.has(yesterday) ? yesterday : null;
     while (cursor && completedDailyDatesSet.has(cursor)) {
@@ -617,7 +633,6 @@ export default function KanbanBoard({
       cursor = shiftDateYMD(cursor, -1);
     }
 
-    // Hitung best streak sepanjang masa
     const sortedDates = Array.from(completedDailyDatesSet).sort();
     let bestStreak = 0;
     let tempStreak = 0;
@@ -631,7 +646,6 @@ export default function KanbanBoard({
       if (tempStreak > bestStreak) bestStreak = tempStreak;
     }
 
-    // 7 hari terakhir (6 hari lalu s/d hari ini)
     const last7Days = Array.from({ length: 7 }, (_, idx) => {
       const dateStr = shiftDateYMD(today, idx - 6);
       const dObj = new Date(`${dateStr}T00:00:00`);
@@ -716,8 +730,28 @@ export default function KanbanBoard({
     });
   }
 
-  function handleDeleteArchivedPermanently(id: string) {
+  function requestDeleteConfirmation(task: Task, isArchived = false) {
+    const childCount = isArchived
+      ? 0
+      : tasks.filter((c) => c.parent_id === task.id).length;
+
+    setDeleteTarget({
+      id: task.id,
+      title: task.title,
+      childCount,
+      isArchived,
+    });
+  }
+
+  function confirmDeleteTask() {
+    if (!deleteTarget) return;
+    const { id } = deleteTarget;
+
+    if (detailTaskId === id) setDetailTaskId(null);
+    setTasks((prev) => prev.filter((t) => t.id !== id));
     setArchivedTasks((prev) => prev.filter((t) => t.id !== id));
+    setDeleteTarget(null);
+
     startTransition(async () => {
       await deleteTask(id);
     });
@@ -829,7 +863,7 @@ export default function KanbanBoard({
     (t) => higherHorizonIds.includes(t.horizon) && t.id !== editingTask?.id
   );
 
-function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
+  function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
     setDragOverCol(null);
     if (!draggedTaskId) return;
     const newPosition = getNowTimestamp();
@@ -956,6 +990,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
 
     const now = getNowTimestamp();
     const isoNow = new Date(now).toISOString();
+    const tempId = generateTempId();
 
     const cleanStart = childHorizon === 'weekly' ? newSubtaskStartDate : null;
     const cleanTarget =
@@ -963,7 +998,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
     const cleanMonths = MULTI_MONTH_HORIZONS.includes(childHorizon) ? newSubtaskMonths : [];
 
     const optimisticSubtask: Task = {
-      id: generateTempId(),
+      id: tempId,
       title: newSubtaskTitle.trim(),
       description: null,
       horizon: childHorizon,
@@ -983,7 +1018,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
     setNewSubtaskPriority('medium');
 
     startTransition(async () => {
-      await createTask({
+      const created = await createTask({
         title: optimisticSubtask.title,
         horizon: childHorizon,
         priority: optimisticSubtask.priority,
@@ -992,6 +1027,8 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
         target_date: cleanTarget,
         target_months: cleanMonths,
       });
+
+      setTasks((prev) => prev.map((t) => (t.id === tempId ? created : t)));
     });
   }
 
@@ -1054,8 +1091,9 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
         await updateTask(editingTask.id, updatedFields);
       });
     } else {
+      const tempId = generateTempId();
       const optimisticTask: Task = {
-        id: generateTempId(),
+        id: tempId,
         title: title.trim(),
         description: description.trim() || null,
         horizon: formHorizon,
@@ -1075,7 +1113,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
       setActiveHorizon(formHorizon);
 
       startTransition(async () => {
-        await createTask({
+        const created = await createTask({
           title: optimisticTask.title,
           description: optimisticTask.description || undefined,
           horizon: formHorizon,
@@ -1085,17 +1123,11 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
           target_date: cleanTargetDate,
           target_months: cleanTargetMonths,
         });
+
+        setTasks((prev) => prev.map((t) => (t.id === tempId ? created : t)));
+        setDetailTaskId((prevId) => (prevId === tempId ? created.id : prevId));
       });
     }
-  }
-
-  function handleDelete(id: string) {
-    if (detailTaskId === id) setDetailTaskId(null);
-    setTasks((prev) => prev.filter((t) => t.id !== id));
-    setArchivedTasks((prev) => prev.filter((t) => t.id !== id));
-    startTransition(async () => {
-      await deleteTask(id);
-    });
   }
 
   function handleArchiveDone() {
@@ -1294,10 +1326,10 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
           </div>
           <div>
             <span className="font-bold tracking-tight text-sm block leading-none">
-              Vlow
+              Vlow Vault
             </span>
             <span className="text-[11px] text-slate-400 dark:text-neutral-500 mt-1 block">
-              Vault Pribadi Favian
+              Multi-Horizon Tracker
             </span>
           </div>
         </div>
@@ -1483,7 +1515,6 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            {/* Badge Daily Streak */}
             <div
               title={
                 streakStats.todayDone
@@ -1561,8 +1592,8 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-neutral-400 truncate mt-0.5">
                   {streakStats.todayDone
-                    ? 'Mantap! Tugas harian hari ini sudah tuntas, streak hari ini menyala.'
-                    : 'Selesaikan minimal 1 tugas harian hari ini untuk menyalakan streak.'}
+                    ? 'Mantap! Tugas harian hari ini sudah tuntas tepat waktu, streak hari ini menyala.'
+                    : 'Selesaikan minimal 1 tugas harian bertanggal hari ini untuk menyalakan streak.'}
                 </p>
               </div>
             </div>
@@ -1572,7 +1603,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                 <div
                   key={day.dateStr}
                   title={`${formatDateID(day.dateStr)}${
-                    day.isCompleted ? ' • Streak Aktif' : ' • Belum ada tugas harian selesai'
+                    day.isCompleted ? ' • Streak Aktif' : ' • Tidak ada streak'
                   }`}
                   className={`w-8 h-10 rounded-xl flex flex-col items-center justify-center text-[10px] border transition-all ${
                     day.isCompleted
@@ -1719,7 +1750,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                         }}
                         onOpenDetail={() => openDetailModal(task)}
                         onEdit={() => openEditModal(task)}
-                        onDelete={() => handleDelete(task.id)}
+                        onDelete={() => requestDeleteConfirmation(task, false)}
                         onMovePrev={() => handleQuickMove(task, 'prev')}
                         onMoveNext={() => handleQuickMove(task, 'next')}
                       />
@@ -1760,7 +1791,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-3xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden"
           >
             <div className="px-5 sm:px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0">
               <div className="flex items-center gap-2.5">
@@ -1873,7 +1904,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                         </button>
 
                         <button
-                          onClick={() => handleDeleteArchivedPermanently(arch.id)}
+                          onClick={() => requestDeleteConfirmation(arch, true)}
                           className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
                           title="Hapus permanen"
                         >
@@ -1903,9 +1934,9 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-lg max-h-[88vh] flex flex-col shadow-2xl overflow-hidden"
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden"
           >
-            <div className="px-5 sm:px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0">
+            <div className="px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span
                   className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-md border ${
@@ -1958,6 +1989,13 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                   <Pencil className="w-4 h-4" />
                 </button>
                 <button
+                  onClick={() => requestDeleteConfirmation(detailTask, false)}
+                  className="p-1.5 text-slate-500 hover:text-rose-600 dark:text-neutral-400 dark:hover:text-rose-400 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                  title="Hapus kartu"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                <button
                   onClick={() => setDetailTaskId(null)}
                   className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-neutral-200 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
                 >
@@ -1966,7 +2004,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
               </div>
             </div>
 
-            <div className="p-5 sm:p-6 overflow-y-auto space-y-5">
+            <div className="p-6 overflow-y-auto space-y-5">
               <div>
                 <h2 className="text-lg font-bold leading-snug text-slate-900 dark:text-neutral-100">
                   {detailTask.title}
@@ -2088,7 +2126,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                   {subtaskMode === 'pick' ? (
                     <form
                       onSubmit={(e) => handleAttachExistingChild(e, detailTask)}
-                      className="space-y-2.5 bg-slate-50 dark:bg-neutral-950/80 p-3 rounded-xl border border-slate-200/80 dark:border-neutral-800"
+                      className="space-y-2.5 bg-slate-50 dark:bg-neutral-950/80 p-3.5 rounded-xl border border-slate-200/80 dark:border-neutral-800"
                     >
                       <label className="block text-[11px] font-medium text-slate-600 dark:text-neutral-400">
                         Pilih tugas {detailChildHorizonMeta.label.toLowerCase()} yang sudah dibuat:
@@ -2115,7 +2153,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                   ) : (
                     <form
                       onSubmit={(e) => handleAddSubtask(e, detailTask, detailChildHorizon)}
-                      className="space-y-2.5 bg-slate-50 dark:bg-neutral-950/80 p-3 rounded-xl border border-slate-200/80 dark:border-neutral-800"
+                      className="space-y-3 bg-slate-50 dark:bg-neutral-950/80 p-3.5 rounded-xl border border-slate-200/80 dark:border-neutral-800"
                     >
                       <div className="flex items-center gap-2">
                         <input
@@ -2151,7 +2189,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                       )}
 
                       {detailChildHorizon === 'weekly' && (
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
                             <label className="block text-[10px] font-medium text-slate-500 dark:text-neutral-400 mb-0.5">
                               Dari Tanggal *
@@ -2169,6 +2207,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                             </label>
                             <CustomDatePicker
                               size="sm"
+                              align="right"
                               required
                               min={newSubtaskStartDate || undefined}
                               value={newSubtaskTargetDate}
@@ -2284,7 +2323,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                               <Unlink className="w-3.5 h-3.5" />
                             </button>
                             <button
-                              onClick={() => handleDelete(sub.id)}
+                              onClick={() => requestDeleteConfirmation(sub, false)}
                               className="text-slate-400 hover:text-rose-500 p-1 cursor-pointer"
                               title="Hapus permanen"
                             >
@@ -2310,15 +2349,21 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
 
       {/* Modal Tambah / Edit Tugas */}
       {isFormModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5 sm:p-6 shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-bold">
+        <div
+          onClick={() => setIsFormModalOpen(false)}
+          className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-6 sm:p-7 shadow-2xl"
+          >
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-base sm:text-lg font-bold">
                 {editingTask ? 'Edit Tugas' : 'Tambah Tugas Baru'}
               </h2>
               <button
                 onClick={() => setIsFormModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-neutral-200 p-1 cursor-pointer"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-neutral-200 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2340,7 +2385,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
                   <label className="block text-xs font-medium text-slate-600 dark:text-neutral-400 mb-1">
                     Rentang Waktu
@@ -2396,7 +2441,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
               )}
 
               {formHorizon === 'weekly' && (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
                     <label className="block text-xs font-medium text-slate-600 dark:text-neutral-400 mb-1">
                       Dari Tanggal *
@@ -2412,6 +2457,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                       Sampai Tanggal *
                     </label>
                     <CustomDatePicker
+                      align="right"
                       required
                       min={startDate || undefined}
                       value={targetDate}
@@ -2422,7 +2468,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
               )}
 
               {formHorizon === 'monthly' && (
-                <div className="p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/50 text-xs text-emerald-800 dark:text-emerald-300 space-y-1">
+                <div className="p-3.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/50 text-xs text-emerald-800 dark:text-emerald-300 space-y-1">
                   <div className="font-semibold">Rentang Tanggal Otomatis</div>
                   {editingMonthlyPreview ? (
                     <p>
@@ -2454,7 +2500,7 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                     <button
                       type="button"
                       onClick={handleAddMonthToForm}
-                      className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl cursor-pointer shrink-0"
+                      className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl cursor-pointer shrink-0"
                     >
                       + Tambah Bulan
                     </button>
@@ -2535,8 +2581,14 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
 
       {/* Modal Share Vault (Read-Only) */}
       {isShareModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-md p-5 sm:p-6 shadow-2xl space-y-4">
+        <div
+          onClick={() => setIsShareModalOpen(false)}
+          className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4"
+          >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Share2 className="w-4 h-4 text-sky-500" />
@@ -2605,6 +2657,60 @@ function handleDrop(targetStatus: Exclude<TaskStatus, 'archived'>) {
                 </span>
               </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal Konfirmasi Hapus */}
+      {deleteTarget && (
+        <div
+          onClick={() => setDeleteTarget(null)}
+          className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-xs z-[60] flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4"
+          >
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/25 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base font-bold text-slate-900 dark:text-neutral-100">
+                  {deleteTarget.isArchived ? 'Hapus Permanen dari Arsip?' : 'Konfirmasi Hapus Tugas'}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
+                  Apakah kamu yakin ingin menghapus tugas{' '}
+                  <strong className="text-slate-800 dark:text-neutral-200">
+                    &ldquo;{deleteTarget.title}&rdquo;
+                  </strong>
+                  ? Tindakan ini tidak dapat dibatalkan.
+                </p>
+                {deleteTarget.childCount > 0 && (
+                  <p className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800/50 rounded-lg px-2.5 py-1.5 mt-2.5">
+                    Tugas ini memiliki {deleteTarget.childCount} sub-tugas yang terhubung (sub-tugas tidak ikut terhapus, namun relasinya akan terlepas).
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-neutral-800">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="px-4 py-2 text-xs sm:text-sm font-medium text-slate-600 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white rounded-xl hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteTask}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm shadow-rose-600/20 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Ya, Hapus</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

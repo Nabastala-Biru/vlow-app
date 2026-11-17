@@ -1,19 +1,15 @@
 'use server';
 
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
+import { clearVaultSession, requireVaultSession } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase';
-import { COOKIE_NAME, verifySessionToken } from '@/lib/auth';
 import { Horizon, Task, TaskPriority, TaskStatus } from '@/types/task';
 
 async function requireAuth() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(COOKIE_NAME)?.value;
-  const isValid = token ? await verifySessionToken(token) : false;
-
-  if (!isValid) {
-    throw new Error('Unauthorized: Sesi Vault tidak valid.');
+  const authenticated = await requireVaultSession();
+  if (!authenticated) {
+    redirect('/login');
   }
 }
 
@@ -24,7 +20,7 @@ export async function getActiveTasks(): Promise<Task[]> {
     .from('tasks')
     .select('*')
     .neq('status', 'archived')
-    .order('position', { ascending: true })
+    .order('position', { ascending: false })
     .order('created_at', { ascending: false });
 
   if (error) throw new Error(error.message);
@@ -41,7 +37,23 @@ export async function getArchivedTasks(): Promise<Task[]> {
     .from('tasks')
     .select('*')
     .eq('status', 'archived')
-    .order('updated_at', { ascending: false });
+    .order('updated_at', { ascending: false })
+    .order('created_at', { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return ((data as Task[]) || []).map((t) => ({
+    ...t,
+    target_months: Array.isArray(t.target_months) ? t.target_months : [],
+  }));
+}
+
+export async function getAllTasksForAnalytics(): Promise<Task[]> {
+  await requireAuth();
+
+  const { data, error } = await supabaseAdmin
+    .from('tasks')
+    .select('*')
+    .order('created_at', { ascending: false });
 
   if (error) throw new Error(error.message);
   return ((data as Task[]) || []).map((t) => ({
@@ -54,29 +66,38 @@ export async function createTask(input: {
   title: string;
   description?: string;
   horizon: Horizon;
-  priority: TaskPriority;
+  priority?: TaskPriority;
   parent_id?: string | null;
   start_date?: string | null;
   target_date?: string | null;
   target_months?: string[];
-}) {
+}): Promise<Task> {
   await requireAuth();
 
-  const { error } = await supabaseAdmin.from('tasks').insert({
-    title: input.title.trim(),
-    description: input.description?.trim() || null,
-    horizon: input.horizon,
-    priority: input.priority || 'medium',
-    status: 'todo',
-    position: Date.now(),
-    parent_id: input.parent_id || null,
-    start_date: input.start_date || null,
-    target_date: input.target_date || null,
-    target_months: input.target_months || [],
-  });
+  const { data, error } = await supabaseAdmin
+    .from('tasks')
+    .insert({
+      title: input.title,
+      description: input.description || null,
+      horizon: input.horizon,
+      priority: input.priority || 'medium',
+      status: 'todo',
+      position: Date.now(),
+      parent_id: input.parent_id || null,
+      start_date: input.start_date || null,
+      target_date: input.target_date || null,
+      target_months: input.target_months || [],
+    })
+    .select('*')
+    .single();
 
   if (error) throw new Error(error.message);
   revalidatePath('/');
+
+  return {
+    ...(data as Task),
+    target_months: Array.isArray(data.target_months) ? data.target_months : [],
+  };
 }
 
 export async function updateTask(
@@ -97,8 +118,8 @@ export async function updateTask(
   const { error } = await supabaseAdmin
     .from('tasks')
     .update({
-      title: input.title.trim(),
-      description: input.description?.trim() || null,
+      title: input.title,
+      description: input.description || null,
       horizon: input.horizon,
       priority: input.priority,
       parent_id: input.parent_id || null,
@@ -113,13 +134,13 @@ export async function updateTask(
   revalidatePath('/');
 }
 
-export async function linkChildTask(childTaskId: string, parentTaskId: string | null) {
+export async function linkChildTask(childTaskId: string, parentId: string | null) {
   await requireAuth();
 
   const { error } = await supabaseAdmin
     .from('tasks')
     .update({
-      parent_id: parentTaskId,
+      parent_id: parentId || null,
       updated_at: new Date().toISOString(),
     })
     .eq('id', childTaskId);
@@ -128,7 +149,11 @@ export async function linkChildTask(childTaskId: string, parentTaskId: string | 
   revalidatePath('/');
 }
 
-export async function moveTask(id: string, status: TaskStatus, position: number) {
+export async function moveTask(
+  id: string,
+  status: Exclude<TaskStatus, 'archived'>,
+  position: number
+) {
   await requireAuth();
 
   const { error } = await supabaseAdmin
@@ -148,6 +173,7 @@ export async function deleteTask(id: string) {
   await requireAuth();
 
   const { error } = await supabaseAdmin.from('tasks').delete().eq('id', id);
+
   if (error) throw new Error(error.message);
   revalidatePath('/');
 }
@@ -157,7 +183,10 @@ export async function archiveCompletedInHorizon(horizon: Horizon) {
 
   const { error } = await supabaseAdmin
     .from('tasks')
-    .update({ status: 'archived', updated_at: new Date().toISOString() })
+    .update({
+      status: 'archived',
+      updated_at: new Date().toISOString(),
+    })
     .eq('horizon', horizon)
     .eq('status', 'done');
 
@@ -184,23 +213,7 @@ export async function restoreArchivedTask(
   revalidatePath('/');
 }
 
-export async function getAllTasksForAnalytics(): Promise<Task[]> {
-  await requireAuth();
-
-  const { data, error } = await supabaseAdmin
-    .from('tasks')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  if (error) throw new Error(error.message);
-  return ((data as Task[]) || []).map((t) => ({
-    ...t,
-    target_months: Array.isArray(t.target_months) ? t.target_months : [],
-  }));
-}
-
 export async function lockVault() {
-  const cookieStore = await cookies();
-  cookieStore.delete(COOKIE_NAME);
+  await clearVaultSession();
   redirect('/login');
 }
