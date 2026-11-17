@@ -42,6 +42,8 @@ import {
   ArrowLeft,
   Flame,
   Sparkles,
+  NotebookPen,
+  HelpCircle,
 } from 'lucide-react';
 import {
   CHILD_HORIZON_MAP,
@@ -66,6 +68,7 @@ import {
   moveTask,
   restoreArchivedTask,
   updateTask,
+  updateTaskNotes,
 } from '@/app/actions/tasks';
 import {
   ShareConfig,
@@ -204,6 +207,7 @@ interface SwipeableTaskCardProps {
   onDragStart: () => void;
   onDragEnd: () => void;
   onOpenDetail: () => void;
+  onOpenNotes: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onMovePrev: () => void;
@@ -220,6 +224,7 @@ function SwipeableTaskCard({
   onDragStart,
   onDragEnd,
   onOpenDetail,
+  onOpenNotes,
   onEdit,
   onDelete,
   onMovePrev,
@@ -239,6 +244,11 @@ function SwipeableTaskCard({
   const canSwipeRight = colId !== 'done';
   const canSwipeLeft = colId !== 'todo';
   const prio = PRIORITY_META[task.priority || 'medium'];
+
+  const hasNotes = Boolean(
+    (task.progress_notes && task.progress_notes.trim()) ||
+      (task.blocker_notes && task.blocker_notes.trim())
+  );
 
   function handleTouchStart(e: React.TouchEvent) {
     if (e.touches.length !== 1) return;
@@ -421,9 +431,29 @@ function SwipeableTaskCard({
           </div>
         )}
 
+        {/* Tombol Tambah / Lihat Catatan Progres & Kendala */}
+        <div onClick={(e) => e.stopPropagation()} className="mt-3">
+          <button
+            type="button"
+            onClick={onOpenNotes}
+            className={`w-full py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 border transition-all cursor-pointer ${
+              hasNotes
+                ? 'bg-amber-50/90 hover:bg-amber-100/90 text-amber-800 border-amber-300/80 dark:bg-amber-950/40 dark:hover:bg-amber-950/70 dark:text-amber-200 dark:border-amber-700/60'
+                : 'bg-slate-50 hover:bg-emerald-50/80 text-slate-600 hover:text-emerald-700 border-slate-200/90 hover:border-emerald-300 dark:bg-neutral-950/80 dark:hover:bg-emerald-950/35 dark:text-neutral-300 dark:hover:text-emerald-300 dark:border-neutral-800 dark:hover:border-emerald-700/60'
+            }`}
+          >
+            <NotebookPen
+              className={`w-3.5 h-3.5 shrink-0 ${
+                hasNotes ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-500'
+              }`}
+            />
+            <span>{hasNotes ? 'Lihat / Edit Catatan' : '+ Tambah Catatan'}</span>
+          </button>
+        </div>
+
         <div
           onClick={(e) => e.stopPropagation()}
-          className="mt-3 pt-2.5 border-t border-slate-100 dark:border-neutral-800/80 flex items-center justify-between text-[11px] gap-2"
+          className="mt-2.5 pt-2.5 border-t border-slate-100 dark:border-neutral-800/80 flex items-center justify-between text-[11px] gap-2"
         >
           <div className="flex items-center gap-1.5 min-w-0 truncate">{scheduleBadge}</div>
 
@@ -491,6 +521,11 @@ export default function KanbanBoard({
 
   // Delete Confirmation Modal state
   const [deleteTarget, setDeleteTarget] = useState<DeleteConfirmTarget | null>(null);
+
+  // Dedicated Task Notes Modal state (Terpisah dari Tambah/Edit Tugas)
+  const [notesTaskId, setNotesTaskId] = useState<string | null>(null);
+  const [progressNotesInput, setProgressNotesInput] = useState('');
+  const [blockerNotesInput, setBlockerNotesInput] = useState('');
 
   // Archive & Analytics state
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
@@ -570,6 +605,10 @@ export default function KanbanBoard({
           setDeleteTarget(null);
           return;
         }
+        if (notesTaskId) {
+          setNotesTaskId(null);
+          return;
+        }
         setDetailTaskId(null);
         setIsFormModalOpen(false);
         setIsShareModalOpen(false);
@@ -582,6 +621,7 @@ export default function KanbanBoard({
       if (
         isTyping ||
         deleteTarget ||
+        notesTaskId ||
         isFormModalOpen ||
         isShareModalOpen ||
         isArchiveModalOpen ||
@@ -698,6 +738,43 @@ export default function KanbanBoard({
     setTimeout(() => setCopied(false), 2000);
   }
 
+  function openNotesModal(task: Task) {
+    setNotesTaskId(task.id);
+    setProgressNotesInput(task.progress_notes || '');
+    setBlockerNotesInput(task.blocker_notes || '');
+  }
+
+  function handleSaveNotes(e: React.FormEvent) {
+    e.preventDefault();
+    if (!notesTaskId) return;
+
+    const cleanProgress = progressNotesInput.trim() || null;
+    const cleanBlocker = blockerNotesInput.trim() || null;
+    const isoNow = new Date().toISOString();
+    const targetId = notesTaskId;
+
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === targetId
+          ? {
+              ...t,
+              progress_notes: cleanProgress,
+              blocker_notes: cleanBlocker,
+              updated_at: isoNow,
+            }
+          : t
+      )
+    );
+    setNotesTaskId(null);
+
+    startTransition(async () => {
+      await updateTaskNotes(targetId, {
+        progress_notes: cleanProgress,
+        blocker_notes: cleanBlocker,
+      });
+    });
+  }
+
   async function openArchiveModal() {
     setMobileMenuOpen(false);
     setArchiveSearch('');
@@ -748,6 +825,7 @@ export default function KanbanBoard({
     const { id } = deleteTarget;
 
     if (detailTaskId === id) setDetailTaskId(null);
+    if (notesTaskId === id) setNotesTaskId(null);
     setTasks((prev) => prev.filter((t) => t.id !== id));
     setArchivedTasks((prev) => prev.filter((t) => t.id !== id));
     setDeleteTarget(null);
@@ -1009,6 +1087,8 @@ export default function KanbanBoard({
       start_date: cleanStart,
       target_date: cleanTarget,
       target_months: cleanMonths,
+      progress_notes: null,
+      blocker_notes: null,
       created_at: isoNow,
       updated_at: isoNow,
     };
@@ -1104,6 +1184,8 @@ export default function KanbanBoard({
         start_date: cleanStartDate,
         target_date: cleanTargetDate,
         target_months: cleanTargetMonths,
+        progress_notes: null,
+        blocker_notes: null,
         created_at: isoNow,
         updated_at: isoNow,
       };
@@ -1126,6 +1208,7 @@ export default function KanbanBoard({
 
         setTasks((prev) => prev.map((t) => (t.id === tempId ? created : t)));
         setDetailTaskId((prevId) => (prevId === tempId ? created.id : prevId));
+        setNotesTaskId((prevId) => (prevId === tempId ? created.id : prevId));
       });
     }
   }
@@ -1146,6 +1229,7 @@ export default function KanbanBoard({
   }
 
   const todayStr = getTodayDateString();
+  const notesTask = notesTaskId ? tasks.find((t) => t.id === notesTaskId) || null : null;
   const detailTask = detailTaskId ? tasks.find((t) => t.id === detailTaskId) || null : null;
   const detailChildHorizon = detailTask ? CHILD_HORIZON_MAP[detailTask.horizon] : null;
   const detailChildHorizonMeta = detailChildHorizon
@@ -1749,6 +1833,7 @@ export default function KanbanBoard({
                           setDragOverCol(null);
                         }}
                         onOpenDetail={() => openDetailModal(task)}
+                        onOpenNotes={() => openNotesModal(task)}
                         onEdit={() => openEditModal(task)}
                         onDelete={() => requestDeleteConfirmation(task, false)}
                         onMovePrev={() => handleQuickMove(task, 'prev')}
@@ -1782,6 +1867,98 @@ export default function KanbanBoard({
         onClose={() => setIsRecapModalOpen(false)}
         allTasks={allCombinedTasks}
       />
+
+      {/* Modal Khusus Catatan Progres & Kendala (Terpisah dari Edit/Tambah Tugas) */}
+      {notesTask && (
+        <div
+          onClick={() => setNotesTaskId(null)}
+          className="fixed inset-0 bg-slate-900/55 dark:bg-black/80 backdrop-blur-xs z-[55] flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden"
+          >
+            <div className="px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-gradient-to-r from-amber-50/60 via-white to-emerald-50/50 dark:from-amber-950/20 dark:via-neutral-900 dark:to-emerald-950/20">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center shrink-0">
+                  <NotebookPen className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-base font-bold leading-none">
+                    Catatan Progres & Evaluasi
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-neutral-400 mt-1 truncate">
+                    Tugas: <strong className="text-slate-700 dark:text-neutral-200">{notesTask.title}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setNotesTaskId(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-neutral-200 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveNotes} className="p-6 overflow-y-auto space-y-5">
+              {/* Bagian 1: Apa yang Sudah Dilakukan */}
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>Apa yang Sudah Dilakukan</span>
+                </label>
+                <p className="text-[11px] text-slate-500 dark:text-neutral-400">
+                  Catat langkah, progres, atau bagian yang sudah berhasil kamu selesaikan sejauh ini.
+                </p>
+                <textarea
+                  rows={4}
+                  autoFocus
+                  value={progressNotesInput}
+                  onChange={(e) => setProgressNotesInput(e.target.value)}
+                  placeholder="- Sudah setup struktur project dan koneksi API&#10;- Berhasil membuat tampilan halaman utama..."
+                  className="w-full px-3.5 py-2.5 bg-emerald-50/30 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl text-sm leading-relaxed focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              {/* Bagian 2: Apa yang Kurang Dimengerti / Perlu Dicari Solusinya */}
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                  <HelpCircle className="w-4 h-4 shrink-0" />
+                  <span>Apa yang Kurang Dimengerti & Perlu Dicari Solusinya</span>
+                </label>
+                <p className="text-[11px] text-slate-500 dark:text-neutral-400">
+                  Tulis konsep yang belum dipahami, error yang muncul, atau referensi/cara yang perlu diriset nanti.
+                </p>
+                <textarea
+                  rows={4}
+                  value={blockerNotesInput}
+                  onChange={(e) => setBlockerNotesInput(e.target.value)}
+                  placeholder="- Belum paham cara optimasi query saat datanya banyak&#10;- Perlu cari cara handle state saat refresh halaman..."
+                  className="w-full px-3.5 py-2.5 bg-amber-50/30 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl text-sm leading-relaxed focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-neutral-800">
+                <button
+                  type="button"
+                  onClick={() => setNotesTaskId(null)}
+                  className="px-4 py-2 text-xs sm:text-sm font-medium text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-sm shadow-emerald-600/20 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Simpan Catatan</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal Arsip Tugas & Pemulihan */}
       {isArchiveModalOpen && (
@@ -2018,6 +2195,22 @@ export default function KanbanBoard({
                     Tidak ada deskripsi tambahan.
                   </p>
                 )}
+
+                {/* Tombol Buka Modul Catatan dari Detail Kartu */}
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={() => openNotesModal(detailTask)}
+                    className="w-full py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300/80 dark:bg-amber-950/40 dark:hover:bg-amber-950/70 dark:text-amber-200 dark:border-amber-700/60 flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <NotebookPen className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <span>
+                      {detailTask.progress_notes || detailTask.blocker_notes
+                        ? 'Buka & Edit Catatan Progres / Kendala'
+                        : '+ Tambah Catatan Progres & Kendala'}
+                    </span>
+                  </button>
+                </div>
 
                 {MULTI_MONTH_HORIZONS.includes(detailTask.horizon) &&
                   detailTask.target_months?.length > 0 && (
@@ -2530,7 +2723,7 @@ export default function KanbanBoard({
 
               <div>
                 <label className="block text-xs font-medium text-slate-600 dark:text-neutral-400 mb-1">
-                  Catatan / Detail
+                  Deskripsi Tugas
                 </label>
                 <textarea
                   rows={3}

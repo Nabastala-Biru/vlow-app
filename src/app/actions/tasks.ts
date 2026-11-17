@@ -217,3 +217,25 @@ export async function lockVault() {
   await clearVaultSession();
   redirect('/login');
 }
+
+export async function updateTaskNotes(
+  id: string,
+  input: {
+    progress_notes: string | null;
+    blocker_notes: string | null;
+  }
+) {
+  await requireAuth();
+
+  const { error } = await supabaseAdmin
+    .from('tasks')
+    .update({
+      progress_notes: input.progress_notes || null,
+      blocker_notes: input.blocker_notes || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+
+  if (error) throw new Error(error.message);
+  revalidatePath('/');
+}
