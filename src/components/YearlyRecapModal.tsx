@@ -399,19 +399,14 @@ export default function YearlyRecapModal({
                   Pencapaian Target Besar
                 </h3>
               </div>
-
+              
               {recap.majorMilestones.length > 0 ? (
                 <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
                   {recap.majorMilestones.map((item) => {
                     const HorizonIcon =
-                      item.horizon === 'yearly'
-                        ? Flag
-                        : item.horizon === 'biannual'
-                        ? Compass
-                        : Target;
+                      item.horizon === 'yearly' ? Flag : Target;
                     const hLabel =
                       HORIZONS.find((h) => h.id === item.horizon)?.shortLabel || item.horizon;
-
                     return (
                       <div
                         key={item.id}
