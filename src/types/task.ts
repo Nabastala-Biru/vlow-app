@@ -1,4 +1,4 @@
-export type Horizon = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'biannual' | 'yearly';
+export type Horizon = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly';
 export type TaskStatus = 'todo' | 'in_progress' | 'done' | 'archived';
 export type TaskPriority = 'low' | 'medium' | 'high';
 
@@ -25,7 +25,6 @@ export const HORIZONS: { id: Horizon; label: string; shortLabel: string; desc: s
   { id: 'weekly', label: 'Mingguan', shortLabel: '1 Minggu', desc: 'Target penyelesaian pekan ini' },
   { id: 'monthly', label: 'Bulanan', shortLabel: '1 Bulan', desc: 'Milestone bulan berjalan' },
   { id: 'quarterly', label: 'Per 3 Bulan', shortLabel: '3 Bulan', desc: 'Sasaran kuartal (Q1–Q4)' },
-  { id: 'biannual', label: 'Per 6 Bulan', shortLabel: '6 Bulan', desc: 'Target tengah tahun' },
   { id: 'yearly', label: '1 Tahun', shortLabel: '1 Tahun', desc: 'Visi & resolusi utama tahun ini' },
 ];
 
@@ -34,8 +33,7 @@ export const CHILD_HORIZON_MAP: Record<Horizon, Horizon | null> = {
   weekly: 'daily',
   monthly: 'weekly',
   quarterly: 'monthly',
-  biannual: 'quarterly',
-  yearly: 'biannual',
+  yearly: 'quarterly',
 };
 
 export const COLUMNS: { id: Exclude<TaskStatus, 'archived'>; title: string }[] = [

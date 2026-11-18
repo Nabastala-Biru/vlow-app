@@ -36,7 +36,6 @@ import {
   CalendarRange,
   CalendarClock,
   Target,
-  Compass,
   Flag,
   ArrowRight,
   ArrowLeft,
@@ -44,6 +43,8 @@ import {
   Sparkles,
   NotebookPen,
   HelpCircle,
+  Bot,
+  Coffee,
 } from 'lucide-react';
 import {
   CHILD_HORIZON_MAP,
@@ -75,6 +76,7 @@ import {
   disableShareLink,
   generateOrRotateShareLink,
 } from '@/app/actions/share';
+import { AgentMessage } from '@/app/actions/agent';
 import {
   CustomDatePicker,
   CustomMonthPicker,
@@ -82,6 +84,7 @@ import {
   SelectOption,
 } from '@/components/VaultPickers';
 import YearlyRecapModal from '@/components/YearlyRecapModal';
+import AgentDrawer from '@/components/AgentDrawer';
 
 function getNowTimestamp() {
   return Date.now();
@@ -129,14 +132,13 @@ function getCurrentMonthString() {
   return `${year}-${month}`;
 }
 
-const MULTI_MONTH_HORIZONS: Horizon[] = ['quarterly', 'biannual', 'yearly'];
+const MULTI_MONTH_HORIZONS: Horizon[] = ['quarterly', 'yearly'];
 
 const HORIZON_ICONS: Record<Horizon, React.ComponentType<{ className?: string }>> = {
   daily: CalendarDays,
   weekly: CalendarRange,
   monthly: CalendarClock,
   quarterly: Target,
-  biannual: Compass,
   yearly: Flag,
 };
 
@@ -204,6 +206,7 @@ interface SwipeableTaskCardProps {
   childCount: number;
   completedChildren: number;
   scheduleBadge: React.ReactNode;
+  isDragging?: boolean;
   onDragStart: () => void;
   onDragEnd: () => void;
   onOpenDetail: () => void;
@@ -221,6 +224,7 @@ function SwipeableTaskCard({
   childCount,
   completedChildren,
   scheduleBadge,
+  isDragging = false,
   onDragStart,
   onDragEnd,
   onOpenDetail,
@@ -319,7 +323,7 @@ function SwipeableTaskCard({
   const isLeftReady = offsetX <= -SWIPE_THRESHOLD && canSwipeLeft;
 
   return (
-    <div className="relative rounded-xl overflow-hidden select-none md:select-auto">
+    <div className="relative rounded-xl overflow-hidden select-none md:select-auto animate-card">
       <div
         className={`md:hidden absolute inset-0 rounded-xl flex items-center justify-between px-4 transition-colors ${
           offsetX > 12 && canSwipeRight
@@ -364,9 +368,13 @@ function SwipeableTaskCard({
         onClick={handleCardClick}
         style={{
           transform: offsetX !== 0 ? `translateX(${offsetX}px)` : undefined,
-          transition: isSwiping ? 'none' : 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1)',
+          transition: isSwiping
+            ? 'none'
+            : 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1), opacity 150ms ease, box-shadow 150ms ease',
         }}
-        className="relative group bg-white hover:bg-slate-50/90 dark:bg-neutral-900 dark:hover:bg-neutral-800/90 border border-slate-200/90 hover:border-emerald-400/60 dark:border-neutral-800 dark:hover:border-emerald-600/50 rounded-xl p-3.5 shadow-xs hover:shadow-md cursor-pointer"
+        className={`relative group bg-white hover:bg-slate-50/90 dark:bg-neutral-900 dark:hover:bg-neutral-800/90 border border-slate-200/90 hover:border-emerald-400/60 dark:border-neutral-800 dark:hover:border-emerald-600/50 rounded-xl p-3.5 shadow-xs hover:shadow-md cursor-pointer ${
+          isDragging ? 'opacity-50 scale-[0.97] rotate-1 shadow-xl' : ''
+        }`}
       >
         <div className="flex flex-wrap items-center gap-1.5 mb-2">
           <span
@@ -401,14 +409,14 @@ function SwipeableTaskCard({
           >
             <button
               onClick={onEdit}
-              className="text-slate-400 hover:text-slate-700 dark:text-neutral-500 dark:hover:text-neutral-200 p-1 rounded cursor-pointer"
+              className="text-slate-400 hover:text-slate-700 dark:text-neutral-500 dark:hover:text-neutral-200 p-1 rounded cursor-pointer active:scale-90 transition-transform"
               title="Edit tugas"
             >
               <Pencil className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={onDelete}
-              className="text-slate-400 hover:text-rose-600 dark:text-neutral-500 dark:hover:text-rose-400 p-1 rounded cursor-pointer"
+              className="text-slate-400 hover:text-rose-600 dark:text-neutral-500 dark:hover:text-rose-400 p-1 rounded cursor-pointer active:scale-90 transition-transform"
               title="Hapus tugas"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -431,12 +439,11 @@ function SwipeableTaskCard({
           </div>
         )}
 
-        {/* Tombol Tambah / Lihat Catatan Progres & Kendala */}
         <div onClick={(e) => e.stopPropagation()} className="mt-3">
           <button
             type="button"
             onClick={onOpenNotes}
-            className={`w-full py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 border transition-all cursor-pointer ${
+            className={`w-full py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 border transition-all duration-150 active:scale-[0.97] cursor-pointer ${
               hasNotes
                 ? 'bg-amber-50/90 hover:bg-amber-100/90 text-amber-800 border-amber-300/80 dark:bg-amber-950/40 dark:hover:bg-amber-950/70 dark:text-amber-200 dark:border-amber-700/60'
                 : 'bg-slate-50 hover:bg-emerald-50/80 text-slate-600 hover:text-emerald-700 border-slate-200/90 hover:border-emerald-300 dark:bg-neutral-950/80 dark:hover:bg-emerald-950/35 dark:text-neutral-300 dark:hover:text-emerald-300 dark:border-neutral-800 dark:hover:border-emerald-700/60'
@@ -461,7 +468,7 @@ function SwipeableTaskCard({
             {colId !== 'todo' && (
               <button
                 onClick={onMovePrev}
-                className="p-1.5 md:p-1 hover:bg-slate-100 dark:hover:bg-neutral-700 rounded text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white cursor-pointer"
+                className="p-1.5 md:p-1 hover:bg-slate-100 dark:hover:bg-neutral-700 rounded text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white active:scale-90 transition-all cursor-pointer"
                 title="Geser ke kiri"
               >
                 <ChevronLeft className="w-3.5 h-3.5" />
@@ -470,7 +477,7 @@ function SwipeableTaskCard({
             {colId !== 'done' ? (
               <button
                 onClick={onMoveNext}
-                className="p-1.5 md:p-1 hover:bg-slate-100 dark:hover:bg-neutral-700 rounded text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white cursor-pointer"
+                className="p-1.5 md:p-1 hover:bg-slate-100 dark:hover:bg-neutral-700 rounded text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white active:scale-90 transition-all cursor-pointer"
                 title="Geser ke kanan"
               >
                 <ChevronRight className="w-3.5 h-3.5" />
@@ -496,10 +503,14 @@ export default function KanbanBoard({
   initialTasks,
   initialAllTasks,
   initialShareConfig,
+  initialAgentMessages = [],
+  initialIsFreeDay = false,
 }: {
   initialTasks: Task[];
   initialAllTasks?: Task[];
   initialShareConfig: ShareConfig;
+  initialAgentMessages?: AgentMessage[];
+  initialIsFreeDay?: boolean;
 }) {
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [activeHorizon, setActiveHorizon] = useState<Horizon>('daily');
@@ -509,6 +520,11 @@ export default function KanbanBoard({
 
   const [isDark, setIsDark] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Agent Drawer & Free Day Status state
+  const [isAgentDrawerOpen, setIsAgentDrawerOpen] = useState(false);
+  const [isFreeDay, setIsFreeDay] = useState(initialIsFreeDay);
+  const unreadAgentCount = initialAgentMessages.filter((m) => !m.is_read).length;
 
   const [searchQuery, setSearchQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'all' | TaskPriority>('all');
@@ -522,7 +538,7 @@ export default function KanbanBoard({
   // Delete Confirmation Modal state
   const [deleteTarget, setDeleteTarget] = useState<DeleteConfirmTarget | null>(null);
 
-  // Dedicated Task Notes Modal state (Terpisah dari Tambah/Edit Tugas)
+  // Dedicated Task Notes Modal state
   const [notesTaskId, setNotesTaskId] = useState<string | null>(null);
   const [progressNotesInput, setProgressNotesInput] = useState('');
   const [blockerNotesInput, setBlockerNotesInput] = useState('');
@@ -571,6 +587,10 @@ export default function KanbanBoard({
   }, [initialTasks]);
 
   useEffect(() => {
+    setIsFreeDay(initialIsFreeDay);
+  }, [initialIsFreeDay]);
+
+  useEffect(() => {
     if (!initialAllTasks) {
       getArchivedTasks()
         .then((data) => setArchivedTasks(data))
@@ -614,6 +634,7 @@ export default function KanbanBoard({
         setIsShareModalOpen(false);
         setIsArchiveModalOpen(false);
         setIsRecapModalOpen(false);
+        setIsAgentDrawerOpen(false);
         setMobileMenuOpen(false);
         return;
       }
@@ -626,6 +647,7 @@ export default function KanbanBoard({
         isShareModalOpen ||
         isArchiveModalOpen ||
         isRecapModalOpen ||
+        isAgentDrawerOpen ||
         detailTaskId
       ) {
         return;
@@ -644,7 +666,7 @@ export default function KanbanBoard({
     return () => window.removeEventListener('keydown', handleKeyDown);
   });
 
-  // Gabungan semua tugas (aktif + arsip) untuk Streak & Rekap Tahunan
+  // Gabungan semua tugas (aktif + arsip) untuk Streak, Progressive Unlock & Rekap Tahunan
   const allCombinedTasks = useMemo(() => {
     const map = new Map<string, Task>();
     archivedTasks.forEach((t) => map.set(t.id, t));
@@ -652,7 +674,29 @@ export default function KanbanBoard({
     return Array.from(map.values());
   }, [tasks, archivedTasks]);
 
-  // Perhitungan Daily Streak (Opsi A + Anti-Backdate)
+  // Progressive Unlock Horizon: 3 Bulan butuh >= 3 tugas Bulanan Done; 1 Tahun butuh 3 Bulan terisi
+  const monthlyDoneTotal = useMemo(
+    () => allCombinedTasks.filter((t) => t.horizon === 'monthly' && t.status === 'done').length,
+    [allCombinedTasks]
+  );
+  const isQuarterlyUnlocked = monthlyDoneTotal >= 3;
+  const hasQuarterlyTasks = useMemo(
+    () => allCombinedTasks.some((t) => t.horizon === 'quarterly'),
+    [allCombinedTasks]
+  );
+  const isYearlyUnlocked = isQuarterlyUnlocked && hasQuarterlyTasks;
+
+  const visibleHorizons = useMemo(
+    () =>
+      HORIZONS.filter((h) => {
+        if (h.id === 'quarterly') return isQuarterlyUnlocked;
+        if (h.id === 'yearly') return isYearlyUnlocked;
+        return true;
+      }),
+    [isQuarterlyUnlocked, isYearlyUnlocked]
+  );
+
+  // Perhitungan Daily Streak
   const streakStats = useMemo(() => {
     const today = getTodayDateString();
     const yesterday = shiftDateYMD(today, -1);
@@ -1094,6 +1138,9 @@ export default function KanbanBoard({
     };
 
     setTasks((prev) => [optimisticSubtask, ...prev]);
+    if (childHorizon === 'daily') {
+      setIsFreeDay(false);
+    }
     setNewSubtaskTitle('');
     setNewSubtaskPriority('medium');
 
@@ -1191,6 +1238,9 @@ export default function KanbanBoard({
       };
 
       setTasks((prev) => [optimisticTask, ...prev]);
+      if (formHorizon === 'daily') {
+        setIsFreeDay(false);
+      }
       setIsFormModalOpen(false);
       setActiveHorizon(formHorizon);
 
@@ -1229,6 +1279,13 @@ export default function KanbanBoard({
   }
 
   const todayStr = getTodayDateString();
+  const isWeekendDay = useMemo(() => {
+    const day = new Date().getDay();
+    return day === 0 || day === 6;
+  }, []);
+
+  const showFreeDayBadge = isWeekendDay || isFreeDay;
+
   const notesTask = notesTaskId ? tasks.find((t) => t.id === notesTaskId) || null : null;
   const detailTask = detailTaskId ? tasks.find((t) => t.id === detailTaskId) || null : null;
   const detailChildHorizon = detailTask ? CHILD_HORIZON_MAP[detailTask.horizon] : null;
@@ -1278,7 +1335,7 @@ export default function KanbanBoard({
     ...HORIZONS.map((h) => ({ value: h.id, label: h.label })),
   ];
 
-  const formHorizonOptions: SelectOption[] = HORIZONS.map((h) => ({
+  const formHorizonOptions: SelectOption[] = visibleHorizons.map((h) => ({
     value: h.id,
     label: h.label,
   }));
@@ -1420,7 +1477,7 @@ export default function KanbanBoard({
 
         <button
           onClick={() => setMobileMenuOpen(false)}
-          className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-neutral-200 cursor-pointer"
+          className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-neutral-200 active:scale-90 transition-all cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>
@@ -1430,7 +1487,7 @@ export default function KanbanBoard({
         <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-neutral-500">
           Horizon Waktu
         </div>
-        {HORIZONS.map((h) => {
+        {visibleHorizons.map((h) => {
           const Icon = HORIZON_ICONS[h.id];
           const activeCount = tasks.filter((t) => t.horizon === h.id && t.status !== 'done').length;
           const active = activeHorizon === h.id;
@@ -1442,7 +1499,7 @@ export default function KanbanBoard({
                 setActiveHorizon(h.id);
                 setMobileMenuOpen(false);
               }}
-              className={`w-full px-3 py-2.5 rounded-xl text-left flex items-center justify-between gap-2 transition-all cursor-pointer ${
+              className={`w-full px-3 py-2.5 rounded-xl text-left flex items-center justify-between gap-2 transition-all duration-150 active:scale-[0.97] cursor-pointer ${
                 active
                   ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/20'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-neutral-400 dark:hover:text-neutral-100 dark:hover:bg-neutral-800/70'
@@ -1476,7 +1533,7 @@ export default function KanbanBoard({
             setMobileMenuOpen(false);
             setIsRecapModalOpen(true);
           }}
-          className="w-full px-3 py-2 rounded-xl text-xs font-semibold text-emerald-700 bg-emerald-50/80 hover:bg-emerald-100/80 dark:text-emerald-300 dark:bg-emerald-950/40 dark:hover:bg-emerald-950/70 border border-emerald-200/70 dark:border-emerald-800/50 flex items-center justify-between transition-colors cursor-pointer"
+          className="w-full px-3 py-2 rounded-xl text-xs font-semibold text-emerald-700 bg-emerald-50/80 hover:bg-emerald-100/80 dark:text-emerald-300 dark:bg-emerald-950/40 dark:hover:bg-emerald-950/70 border border-emerald-200/70 dark:border-emerald-800/50 flex items-center justify-between transition-all duration-150 active:scale-[0.97] cursor-pointer"
         >
           <span className="flex items-center gap-2.5">
             <Sparkles className="w-4 h-4 text-emerald-500" />
@@ -1489,7 +1546,7 @@ export default function KanbanBoard({
 
         <button
           onClick={openArchiveModal}
-          className="w-full px-3 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100 dark:text-neutral-400 dark:hover:bg-neutral-800/70 flex items-center justify-between transition-colors cursor-pointer"
+          className="w-full px-3 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100 dark:text-neutral-400 dark:hover:bg-neutral-800/70 flex items-center justify-between transition-all duration-150 active:scale-[0.97] cursor-pointer"
         >
           <span className="flex items-center gap-2.5">
             <ArchiveRestore className="w-4 h-4 text-amber-500" />
@@ -1507,7 +1564,7 @@ export default function KanbanBoard({
             setMobileMenuOpen(false);
             setIsShareModalOpen(true);
           }}
-          className={`w-full px-3 py-2 rounded-xl text-xs font-medium flex items-center justify-between transition-colors cursor-pointer ${
+          className={`w-full px-3 py-2 rounded-xl text-xs font-medium flex items-center justify-between transition-all duration-150 active:scale-[0.97] cursor-pointer ${
             shareConfig.share_enabled
               ? 'bg-sky-50 text-sky-700 border border-sky-200/80 dark:bg-sky-950/50 dark:text-sky-300 dark:border-sky-800/60'
               : 'text-slate-600 hover:bg-slate-100 dark:text-neutral-400 dark:hover:bg-neutral-800/70'
@@ -1524,7 +1581,7 @@ export default function KanbanBoard({
 
         <button
           onClick={toggleTheme}
-          className="w-full px-3 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100 dark:text-neutral-400 dark:hover:bg-neutral-800/70 flex items-center gap-2.5 transition-colors cursor-pointer"
+          className="w-full px-3 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100 dark:text-neutral-400 dark:hover:bg-neutral-800/70 flex items-center gap-2.5 transition-all duration-150 active:scale-[0.97] cursor-pointer"
         >
           {isDark ? (
             <>
@@ -1542,7 +1599,7 @@ export default function KanbanBoard({
         <form action={lockVault}>
           <button
             type="submit"
-            className="w-full px-3 py-2 rounded-xl text-xs font-medium text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40 flex items-center gap-2.5 transition-colors cursor-pointer"
+            className="w-full px-3 py-2 rounded-xl text-xs font-medium text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40 flex items-center gap-2.5 transition-all duration-150 active:scale-[0.97] cursor-pointer"
           >
             <Lock className="w-4 h-4" />
             <span>Kunci Vault</span>
@@ -1562,9 +1619,9 @@ export default function KanbanBoard({
         <div className="fixed inset-0 z-50 lg:hidden flex">
           <div
             onClick={() => setMobileMenuOpen(false)}
-            className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs"
+            className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs animate-backdrop"
           />
-          <aside className="relative w-64 max-w-[80vw] bg-white dark:bg-neutral-900 border-r border-slate-200 dark:border-neutral-800 h-full z-10">
+          <aside className="relative w-64 max-w-[80vw] bg-white dark:bg-neutral-900 border-r border-slate-200 dark:border-neutral-800 h-full z-10 animate-modal">
             <SidebarContent />
           </aside>
         </div>
@@ -1572,10 +1629,11 @@ export default function KanbanBoard({
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-16 border-b border-slate-200/80 dark:border-neutral-800/90 bg-white/80 dark:bg-neutral-900/60 backdrop-blur-md sticky top-0 z-20 px-4 sm:px-6 flex items-center justify-between gap-3">
+          {/* Kiri Header */}
           <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => setMobileMenuOpen(true)}
-              className="lg:hidden p-2 rounded-xl border border-slate-200 dark:border-neutral-800 text-slate-600 dark:text-neutral-300 cursor-pointer"
+              className="lg:hidden p-2 rounded-xl border border-slate-200 dark:border-neutral-800 text-slate-600 dark:text-neutral-300 active:scale-95 transition-all cursor-pointer"
               title="Buka Menu"
             >
               <Menu className="w-4 h-4" />
@@ -1598,6 +1656,19 @@ export default function KanbanBoard({
             </div>
           </div>
 
+          {/* Tengah Header: Indikator Hari Libur / Kosong (Hilang otomatis saat buat task baru) */}
+          {showFreeDayBadge && (
+            <div className="hidden md:flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-sky-50/90 dark:bg-sky-950/50 border border-sky-200/80 dark:border-sky-800/60 text-sky-700 dark:text-sky-300 text-xs font-medium shadow-xs animate-card">
+              <Coffee className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+              <span>
+                {isWeekendDay
+                  ? 'Akhir pekan — Hari libur'
+                  : 'Hari ini libur — tidak ada jadwal kerja'}
+              </span>
+            </div>
+          )}
+
+          {/* Kanan Header */}
           <div className="flex items-center gap-2 shrink-0">
             <div
               title={
@@ -1625,8 +1696,20 @@ export default function KanbanBoard({
             </div>
 
             <button
+              onClick={() => setIsAgentDrawerOpen(true)}
+              className="relative px-3 py-2 bg-white hover:bg-emerald-50 dark:bg-neutral-900 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-neutral-200 border border-slate-200 dark:border-neutral-800 text-xs sm:text-sm font-medium rounded-xl flex items-center gap-1.5 transition-all duration-150 active:scale-[0.96] cursor-pointer"
+              title="Vlow Assistant"
+            >
+              <Bot className="w-4 h-4 text-emerald-500" />
+              <span className="hidden sm:inline">Asisten</span>
+              {unreadAgentCount > 0 && (
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+              )}
+            </button>
+
+            <button
               onClick={() => setIsRecapModalOpen(true)}
-              className="hidden sm:flex px-3 py-2 bg-white hover:bg-emerald-50 dark:bg-neutral-900 dark:hover:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-slate-200 dark:border-neutral-800 text-xs sm:text-sm font-medium rounded-xl items-center gap-1.5 transition-colors cursor-pointer"
+              className="hidden sm:flex px-3 py-2 bg-white hover:bg-emerald-50 dark:bg-neutral-900 dark:hover:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-slate-200 dark:border-neutral-800 text-xs sm:text-sm font-medium rounded-xl items-center gap-1.5 transition-all duration-150 active:scale-[0.96] cursor-pointer"
               title="Lihat Rekap Tahunan"
             >
               <Sparkles className="w-4 h-4 text-emerald-500" />
@@ -1635,7 +1718,7 @@ export default function KanbanBoard({
 
             <button
               onClick={openCreateModal}
-              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm shadow-emerald-600/20 transition-all cursor-pointer"
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm shadow-emerald-600/20 transition-all duration-150 active:scale-[0.96] cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>Tugas Baru</span>
@@ -1647,6 +1730,18 @@ export default function KanbanBoard({
         </header>
 
         <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 pt-5 pb-2 space-y-3">
+          {/* Banner Hari Libur versi Mobile */}
+          {showFreeDayBadge && (
+            <div className="md:hidden flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-sky-50/90 dark:bg-sky-950/50 border border-sky-200/80 dark:border-sky-800/60 text-sky-700 dark:text-sky-300 text-xs font-medium animate-card">
+              <Coffee className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+              <span>
+                {isWeekendDay
+                  ? 'Akhir pekan — Hari libur'
+                  : 'Hari ini libur — tidak ada jadwal kerja'}
+              </span>
+            </div>
+          )}
+
           {/* Strip Streak 7 Hari Terakhir */}
           <div className="bg-white dark:bg-neutral-900/70 border border-slate-200/90 dark:border-neutral-800 rounded-2xl px-4 py-3 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -1755,7 +1850,7 @@ export default function KanbanBoard({
               {doneCount > 0 && (
                 <button
                   onClick={handleArchiveDone}
-                  className="text-xs font-medium text-slate-600 hover:text-emerald-700 dark:text-neutral-300 dark:hover:text-emerald-400 flex items-center gap-1.5 bg-slate-100 hover:bg-emerald-50 dark:bg-neutral-800 dark:hover:bg-emerald-950/40 border border-slate-200 dark:border-neutral-700 px-3 py-1.5 rounded-xl transition-colors cursor-pointer"
+                  className="text-xs font-medium text-slate-600 hover:text-emerald-700 dark:text-neutral-300 dark:hover:text-emerald-400 flex items-center gap-1.5 bg-slate-100 hover:bg-emerald-50 dark:bg-neutral-800 dark:hover:bg-emerald-950/40 border border-slate-200 dark:border-neutral-700 px-3 py-1.5 rounded-xl transition-all duration-150 active:scale-[0.96] cursor-pointer"
                 >
                   <Archive className="w-3.5 h-3.5" />
                   <span>Arsipkan {doneCount} Selesai</span>
@@ -1810,7 +1905,6 @@ export default function KanbanBoard({
                   </span>
                 </div>
 
-                {/* Wadah kartu dibatasi maksimal tinggi 5 kartu & otomatis scroll jika lebih */}
                 <div
                   className={`space-y-3 flex-1 ${
                     hasMoreThanThree
@@ -1835,6 +1929,7 @@ export default function KanbanBoard({
                         childCount={childTasks.length}
                         completedChildren={completedChildren}
                         scheduleBadge={renderTaskScheduleBadge(task)}
+                        isDragging={draggedTaskId === task.id}
                         onDragStart={() => setDraggedTaskId(task.id)}
                         onDragEnd={() => {
                           setDraggedTaskId(null);
@@ -1875,6 +1970,13 @@ export default function KanbanBoard({
         </main>
       </div>
 
+      {/* Agent Drawer */}
+      <AgentDrawer
+        isOpen={isAgentDrawerOpen}
+        onClose={() => setIsAgentDrawerOpen(false)}
+        initialMessages={initialAgentMessages}
+      />
+
       {/* Modal Rekap Tahunan */}
       <YearlyRecapModal
         isOpen={isRecapModalOpen}
@@ -1882,15 +1984,15 @@ export default function KanbanBoard({
         allTasks={allCombinedTasks}
       />
 
-      {/* Modal Khusus Catatan Progres & Kendala (Terpisah dari Edit/Tambah Tugas) */}
+      {/* Modal Khusus Catatan Progres & Kendala */}
       {notesTask && (
         <div
           onClick={() => setNotesTaskId(null)}
-          className="fixed inset-0 bg-slate-900/55 dark:bg-black/80 backdrop-blur-xs z-[55] flex items-center justify-center p-4"
+          className="fixed inset-0 bg-slate-900/55 dark:bg-black/80 backdrop-blur-xs z-[55] flex items-center justify-center p-4 animate-backdrop"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden"
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-modal"
           >
             <div className="px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-gradient-to-r from-amber-50/60 via-white to-emerald-50/50 dark:from-amber-950/20 dark:via-neutral-900 dark:to-emerald-950/20">
               <div className="flex items-center gap-3 min-w-0">
@@ -1909,14 +2011,13 @@ export default function KanbanBoard({
 
               <button
                 onClick={() => setNotesTaskId(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-neutral-200 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-neutral-200 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors active:scale-90 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <form onSubmit={handleSaveNotes} className="p-6 overflow-y-auto space-y-5">
-              {/* Bagian 1: Apa yang Sudah Dilakukan */}
               <div className="space-y-2">
                 <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -1935,7 +2036,6 @@ export default function KanbanBoard({
                 />
               </div>
 
-              {/* Bagian 2: Apa yang Kurang Dimengerti / Perlu Dicari Solusinya */}
               <div className="space-y-2">
                 <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
                   <HelpCircle className="w-4 h-4 shrink-0" />
@@ -1957,13 +2057,13 @@ export default function KanbanBoard({
                 <button
                   type="button"
                   onClick={() => setNotesTaskId(null)}
-                  className="px-4 py-2 text-xs sm:text-sm font-medium text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white cursor-pointer"
+                  className="px-4 py-2 text-xs sm:text-sm font-medium text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white active:scale-95 transition-all cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-sm shadow-emerald-600/20 flex items-center gap-1.5 cursor-pointer"
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-sm shadow-emerald-600/20 flex items-center gap-1.5 active:scale-[0.96] transition-all cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
                   <span>Simpan Catatan</span>
@@ -1978,11 +2078,11 @@ export default function KanbanBoard({
       {isArchiveModalOpen && (
         <div
           onClick={() => setIsArchiveModalOpen(false)}
-          className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-backdrop"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-3xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden"
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-3xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden animate-modal"
           >
             <div className="px-5 sm:px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0">
               <div className="flex items-center gap-2.5">
@@ -1999,7 +2099,7 @@ export default function KanbanBoard({
 
               <button
                 onClick={() => setIsArchiveModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-neutral-200 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-neutral-200 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors active:scale-90 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2078,7 +2178,7 @@ export default function KanbanBoard({
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           onClick={() => handleRestoreTask(arch, 'todo')}
-                          className="px-2.5 py-1.5 text-[11px] font-medium bg-white hover:bg-slate-100 dark:bg-neutral-900 dark:hover:bg-neutral-800 text-slate-700 dark:text-neutral-300 border border-slate-200 dark:border-neutral-700 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                          className="px-2.5 py-1.5 text-[11px] font-medium bg-white hover:bg-slate-100 dark:bg-neutral-900 dark:hover:bg-neutral-800 text-slate-700 dark:text-neutral-300 border border-slate-200 dark:border-neutral-700 rounded-lg flex items-center gap-1 transition-all active:scale-95 cursor-pointer"
                           title="Kembalikan ke kolom To Do"
                         >
                           <RotateCcw className="w-3 h-3" />
@@ -2087,7 +2187,7 @@ export default function KanbanBoard({
 
                         <button
                           onClick={() => handleRestoreTask(arch, 'done')}
-                          className="px-2.5 py-1.5 text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                          className="px-2.5 py-1.5 text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg flex items-center gap-1 transition-all active:scale-95 cursor-pointer"
                           title="Kembalikan ke kolom Done"
                         >
                           <ArchiveRestore className="w-3 h-3" />
@@ -2096,7 +2196,7 @@ export default function KanbanBoard({
 
                         <button
                           onClick={() => requestDeleteConfirmation(arch, true)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                          className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all active:scale-90 cursor-pointer"
                           title="Hapus permanen"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -2121,11 +2221,11 @@ export default function KanbanBoard({
       {detailTask && (
         <div
           onClick={() => setDetailTaskId(null)}
-          className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-backdrop"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden"
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-modal"
           >
             <div className="px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -2174,21 +2274,21 @@ export default function KanbanBoard({
               <div className="flex items-center gap-1 shrink-0">
                 <button
                   onClick={() => openEditModal(detailTask)}
-                  className="p-1.5 text-slate-500 hover:text-emerald-600 dark:text-neutral-400 dark:hover:text-emerald-400 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+                  className="p-1.5 text-slate-500 hover:text-emerald-600 dark:text-neutral-400 dark:hover:text-emerald-400 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors active:scale-90 cursor-pointer"
                   title="Edit detail kartu"
                 >
                   <Pencil className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => requestDeleteConfirmation(detailTask, false)}
-                  className="p-1.5 text-slate-500 hover:text-rose-600 dark:text-neutral-400 dark:hover:text-rose-400 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                  className="p-1.5 text-slate-500 hover:text-rose-600 dark:text-neutral-400 dark:hover:text-rose-400 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors active:scale-90 cursor-pointer"
                   title="Hapus kartu"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => setDetailTaskId(null)}
-                  className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-neutral-200 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+                  className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-neutral-200 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors active:scale-90 cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -2210,12 +2310,11 @@ export default function KanbanBoard({
                   </p>
                 )}
 
-                {/* Tombol Buka Modul Catatan dari Detail Kartu */}
                 <div className="mt-4">
                   <button
                     type="button"
                     onClick={() => openNotesModal(detailTask)}
-                    className="w-full py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300/80 dark:bg-amber-950/40 dark:hover:bg-amber-950/70 dark:text-amber-200 dark:border-amber-700/60 flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                    className="w-full py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300/80 dark:bg-amber-950/40 dark:hover:bg-amber-950/70 dark:text-amber-200 dark:border-amber-700/60 flex items-center justify-center gap-2 transition-all duration-150 active:scale-[0.97] cursor-pointer"
                   >
                     <NotebookPen className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                     <span>
@@ -2350,7 +2449,7 @@ export default function KanbanBoard({
                         <button
                           type="submit"
                           disabled={!selectedExistingChildId}
-                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1 shrink-0 cursor-pointer"
+                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1 shrink-0 active:scale-95 transition-all cursor-pointer"
                         >
                           <Link2 className="w-3.5 h-3.5" />
                           <span>Tautkan</span>
@@ -2436,7 +2535,7 @@ export default function KanbanBoard({
                             <button
                               type="button"
                               onClick={handleAddMonthToSubtask}
-                              className="px-2.5 py-1.5 text-xs font-medium bg-slate-200 hover:bg-slate-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 rounded-lg cursor-pointer"
+                              className="px-2.5 py-1.5 text-xs font-medium bg-slate-200 hover:bg-slate-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 rounded-lg active:scale-95 transition-all cursor-pointer"
                             >
                               + Bulan
                             </button>
@@ -2469,7 +2568,7 @@ export default function KanbanBoard({
 
                       <button
                         type="submit"
-                        className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1 cursor-pointer"
+                        className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1 active:scale-[0.97] transition-all cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
                         <span>Simpan & Kaitkan Tugas {detailChildHorizonMeta.label}</span>
@@ -2489,7 +2588,7 @@ export default function KanbanBoard({
                             <button
                               onClick={() => handleCycleSubtaskStatus(sub)}
                               title="Ubah status"
-                              className="shrink-0 cursor-pointer"
+                              className="shrink-0 active:scale-90 transition-transform cursor-pointer"
                             >
                               {sub.status === 'done' ? (
                                 <CheckCircle2 className="w-4 h-4 text-emerald-500" />
@@ -2524,14 +2623,14 @@ export default function KanbanBoard({
                             </span>
                             <button
                               onClick={() => handleDetachChild(sub.id)}
-                              className="text-slate-400 hover:text-amber-500 p-1 cursor-pointer"
+                              className="text-slate-400 hover:text-amber-500 p-1 active:scale-90 transition-transform cursor-pointer"
                               title="Lepas relasi (tugas asli tetap tersimpan)"
                             >
                               <Unlink className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => requestDeleteConfirmation(sub, false)}
-                              className="text-slate-400 hover:text-rose-500 p-1 cursor-pointer"
+                              className="text-slate-400 hover:text-rose-500 p-1 active:scale-90 transition-transform cursor-pointer"
                               title="Hapus permanen"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -2558,11 +2657,11 @@ export default function KanbanBoard({
       {isFormModalOpen && (
         <div
           onClick={() => setIsFormModalOpen(false)}
-          className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-backdrop"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-6 sm:p-7 shadow-2xl"
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-6 sm:p-7 shadow-2xl animate-modal"
           >
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-base sm:text-lg font-bold">
@@ -2570,7 +2669,7 @@ export default function KanbanBoard({
               </h2>
               <button
                 onClick={() => setIsFormModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-neutral-200 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 cursor-pointer"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-neutral-200 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 active:scale-90 transition-all cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2707,7 +2806,7 @@ export default function KanbanBoard({
                     <button
                       type="button"
                       onClick={handleAddMonthToForm}
-                      className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl cursor-pointer shrink-0"
+                      className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl active:scale-95 transition-all cursor-pointer shrink-0"
                     >
                       + Tambah Bulan
                     </button>
@@ -2770,13 +2869,13 @@ export default function KanbanBoard({
                 <button
                   type="button"
                   onClick={() => setIsFormModalOpen(false)}
-                  className="px-4 py-2 text-xs sm:text-sm text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white cursor-pointer"
+                  className="px-4 py-2 text-xs sm:text-sm text-slate-500 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white active:scale-95 transition-all cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-sm cursor-pointer"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-sm active:scale-[0.96] transition-all cursor-pointer"
                 >
                   {editingTask ? 'Simpan Perubahan' : 'Simpan Tugas'}
                 </button>
@@ -2790,11 +2889,11 @@ export default function KanbanBoard({
       {isShareModalOpen && (
         <div
           onClick={() => setIsShareModalOpen(false)}
-          className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-slate-900/50 dark:bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-backdrop"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4"
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4 animate-modal"
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -2803,15 +2902,15 @@ export default function KanbanBoard({
               </div>
               <button
                 onClick={() => setIsShareModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-neutral-200 p-1 cursor-pointer"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-neutral-200 p-1 active:scale-90 transition-all cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <p className="text-xs text-slate-500 dark:text-neutral-400 leading-relaxed">
-              Siapa pun yang memiliki link ini hanya dapat <strong>melihat</strong> progres tugasmu
-              tanpa bisa mengubah, menggeser, atau menghapus kartu apa pun.
+              Siapa pun yang memiliki link ini hanya dapat <strong>melihat</strong> progres tugas
+              dan catatanmu tanpa bisa mengubah, menggeser, atau menghapus kartu apa pun.
             </p>
 
             {shareConfig.share_enabled && shareConfig.share_token ? (
@@ -2825,7 +2924,7 @@ export default function KanbanBoard({
                   />
                   <button
                     onClick={handleCopyShareUrl}
-                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shrink-0 cursor-pointer"
+                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shrink-0 active:scale-95 transition-all cursor-pointer"
                   >
                     {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copied ? 'Tersalin' : 'Salin'}</span>
@@ -2836,7 +2935,7 @@ export default function KanbanBoard({
                   <button
                     onClick={handleEnableOrRotateShare}
                     disabled={shareLoading}
-                    className="text-xs text-slate-600 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-neutral-200 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    className="text-xs text-slate-600 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-neutral-200 flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${shareLoading ? 'animate-spin' : ''}`} />
                     <span>Buat Link Baru (Reset)</span>
@@ -2845,7 +2944,7 @@ export default function KanbanBoard({
                   <button
                     onClick={handleDisableShare}
                     disabled={shareLoading}
-                    className="text-xs text-rose-600 hover:text-rose-700 dark:text-rose-400 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    className="text-xs text-rose-600 hover:text-rose-700 dark:text-rose-400 flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
                   >
                     <EyeOff className="w-3.5 h-3.5" />
                     <span>Matikan Akses</span>
@@ -2856,7 +2955,7 @@ export default function KanbanBoard({
               <button
                 onClick={handleEnableOrRotateShare}
                 disabled={shareLoading}
-                className="w-full py-2.5 px-4 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                className="w-full py-2.5 px-4 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all active:scale-[0.97] cursor-pointer"
               >
                 <Share2 className="w-4 h-4" />
                 <span>
@@ -2872,11 +2971,11 @@ export default function KanbanBoard({
       {deleteTarget && (
         <div
           onClick={() => setDeleteTarget(null)}
-          className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-xs z-[60] flex items-center justify-center p-4"
+          className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-xs z-[60] flex items-center justify-center p-4 animate-backdrop"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4"
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4 animate-modal"
           >
             <div className="flex items-start gap-3.5">
               <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/25 flex items-center justify-center shrink-0">
@@ -2905,14 +3004,14 @@ export default function KanbanBoard({
               <button
                 type="button"
                 onClick={() => setDeleteTarget(null)}
-                className="px-4 py-2 text-xs sm:text-sm font-medium text-slate-600 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white rounded-xl hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+                className="px-4 py-2 text-xs sm:text-sm font-medium text-slate-600 hover:text-slate-900 dark:text-neutral-400 dark:hover:text-white rounded-xl hover:bg-slate-100 dark:hover:bg-neutral-800 transition-all active:scale-95 cursor-pointer"
               >
                 Batal
               </button>
               <button
                 type="button"
                 onClick={confirmDeleteTask}
-                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm shadow-rose-600/20 transition-colors cursor-pointer"
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm shadow-rose-600/20 transition-all active:scale-95 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Ya, Hapus</span>

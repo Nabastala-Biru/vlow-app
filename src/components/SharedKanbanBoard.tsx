@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Calendar,
   Link2,
@@ -21,8 +21,9 @@ import {
   CalendarRange,
   CalendarClock,
   Target,
-  Compass,
   Flag,
+  NotebookPen,
+  HelpCircle,
 } from 'lucide-react';
 import {
   CHILD_HORIZON_MAP,
@@ -45,14 +46,13 @@ function getTodayDateString() {
   return `${year}-${month}-${day}`;
 }
 
-const MULTI_MONTH_HORIZONS: Horizon[] = ['quarterly', 'biannual', 'yearly'];
+const MULTI_MONTH_HORIZONS: Horizon[] = ['quarterly', 'yearly'];
 
 const HORIZON_ICONS: Record<Horizon, React.ComponentType<{ className?: string }>> = {
   daily: CalendarDays,
   weekly: CalendarRange,
   monthly: CalendarClock,
   quarterly: Target,
-  biannual: Compass,
   yearly: Flag,
 };
 
@@ -102,6 +102,28 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
     localStorage.setItem('vault_theme', next ? 'dark' : 'light');
     document.documentElement.classList.toggle('dark', next);
   }
+
+  // Syarat Progressive Unlock yang konsisten dengan papan utama
+  const monthlyDoneTotal = useMemo(
+    () => tasks.filter((t) => t.horizon === 'monthly' && t.status === 'done').length,
+    [tasks]
+  );
+  const isQuarterlyUnlocked = monthlyDoneTotal >= 3;
+  const hasQuarterlyTasks = useMemo(
+    () => tasks.some((t) => t.horizon === 'quarterly'),
+    [tasks]
+  );
+  const isYearlyUnlocked = isQuarterlyUnlocked && hasQuarterlyTasks;
+
+  const visibleHorizons = useMemo(
+    () =>
+      HORIZONS.filter((h) => {
+        if (h.id === 'quarterly') return isQuarterlyUnlocked;
+        if (h.id === 'yearly') return isYearlyUnlocked;
+        return true;
+      }),
+    [isQuarterlyUnlocked, isYearlyUnlocked]
+  );
 
   const activeHorizonMeta = HORIZONS.find((h) => h.id === activeHorizon)!;
   const horizonTasks = tasks.filter((t) => t.horizon === activeHorizon);
@@ -238,7 +260,7 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
         <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-neutral-500">
           Horizon Waktu
         </div>
-        {HORIZONS.map((h) => {
+        {visibleHorizons.map((h) => {
           const Icon = HORIZON_ICONS[h.id];
           const activeCount = tasks.filter((t) => t.horizon === h.id && t.status !== 'done').length;
           const active = activeHorizon === h.id;
@@ -348,14 +370,14 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
             <div className="flex items-center gap-4 flex-1">
               <div className="text-sm font-medium text-slate-700 dark:text-neutral-300 whitespace-nowrap">
                 Progres:{' '}
-                <span className="text-emerald-600 dark:text-emerald-400 font-bold">{progress}%</span>
+                <span className="text-sky-600 dark:text-sky-400 font-bold">{progress}%</span>
                 <span className="text-xs text-slate-400 dark:text-neutral-500 ml-1.5">
                   ({doneCount}/{horizonTasks.length})
                 </span>
               </div>
               <div className="flex-1 max-w-xs h-2.5 bg-slate-100 dark:bg-neutral-800 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300 rounded-full"
+                  className="h-full bg-gradient-to-r from-sky-500 to-emerald-400 transition-all duration-300 rounded-full"
                   style={{ width: `${progress}%` }}
                 />
               </div>
@@ -369,7 +391,7 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Cari tugas..."
-                  className="w-full sm:w-52 pl-8 pr-7 py-1.5 text-xs bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full sm:w-52 pl-8 pr-7 py-1.5 text-xs bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-sky-500 transition-colors"
                 />
                 {searchQuery && (
                   <button
@@ -384,7 +406,7 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
               <select
                 value={priorityFilter}
                 onChange={(e) => setPriorityFilter(e.target.value as 'all' | TaskPriority)}
-                className="px-3 py-1.5 text-xs bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-emerald-500 cursor-pointer"
+                className="px-3 py-1.5 text-xs bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-sky-500 cursor-pointer"
               >
                 <option value="all">Semua Prioritas</option>
                 <option value="high">Prioritas: High</option>
@@ -433,6 +455,10 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
                     const childTasks = tasks.filter((c) => c.parent_id === task.id);
                     const completedChildren = childTasks.filter((c) => c.status === 'done').length;
                     const prio = PRIORITY_META[task.priority || 'medium'];
+                    const hasNotes = Boolean(
+                      (task.progress_notes && task.progress_notes.trim()) ||
+                        (task.blocker_notes && task.blocker_notes.trim())
+                    );
 
                     return (
                       <div
@@ -460,7 +486,7 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
                         </div>
 
                         <h3
-                          className={`text-sm font-semibold leading-snug ${
+                          className={`text-sm font-semibold leading-snug group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors ${
                             task.status === 'done'
                               ? 'line-through text-slate-400 dark:text-neutral-500'
                               : 'text-slate-800 dark:text-neutral-100'
@@ -475,17 +501,29 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
                           </p>
                         )}
 
-                        {childTasks.length > 0 && (
-                          <div className="mt-2.5 flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200/70 dark:border-indigo-900/50 px-2 py-1 rounded-lg w-fit">
-                            <Layers className="w-3 h-3" />
-                            <span>
-                              {completedChildren}/{childTasks.length} sub-tugas selesai
-                            </span>
-                          </div>
-                        )}
+                        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                          {childTasks.length > 0 && (
+                            <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200/70 dark:border-indigo-900/50 px-2 py-1 rounded-lg">
+                              <Layers className="w-3 h-3" />
+                              <span>
+                                {completedChildren}/{childTasks.length} sub-tugas
+                              </span>
+                            </div>
+                          )}
+
+                          {hasNotes && (
+                            <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800/60 px-2 py-1 rounded-lg">
+                              <NotebookPen className="w-3 h-3 text-amber-500" />
+                              <span>Ada Catatan</span>
+                            </div>
+                          )}
+                        </div>
 
                         <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-neutral-800/80 flex items-center justify-between text-[11px]">
                           {renderTaskScheduleBadge(task)}
+                          <span className="text-[10px] font-medium text-slate-400 group-hover:text-sky-500 transition-colors">
+                            Klik untuk detail
+                          </span>
                         </div>
                       </div>
                     );
@@ -503,7 +541,7 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
         </main>
       </div>
 
-      {/* Modal Detail Read-Only */}
+      {/* Modal Detail Read-Only (Termasuk Akses Baca Catatan) */}
       {detailTask && (
         <div
           onClick={() => setDetailTaskId(null)}
@@ -511,7 +549,7 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-lg max-h-[88vh] flex flex-col shadow-2xl overflow-hidden"
+            className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl w-full max-w-xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden"
           >
             <div className="px-6 py-4 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -578,6 +616,40 @@ export default function SharedKanbanBoard({ tasks }: { tasks: Task[] }) {
                   <p className="text-xs italic text-slate-400 dark:text-neutral-500 mt-2">
                     Tidak ada deskripsi tambahan.
                   </p>
+                )}
+
+                {/* Tampilan Baca Catatan Progres & Kendala (Strict Read-Only) */}
+                {(detailTask.progress_notes || detailTask.blocker_notes) && (
+                  <div className="mt-4 space-y-3 pt-4 border-t border-slate-100 dark:border-neutral-800">
+                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-neutral-400">
+                      <NotebookPen className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Catatan Progres &amp; Evaluasi (Read-Only)</span>
+                    </div>
+
+                    {detailTask.progress_notes && (
+                      <div className="p-3.5 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/25 border border-emerald-200/80 dark:border-emerald-800/50 space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Yang Sudah Dilakukan</span>
+                        </div>
+                        <p className="text-xs sm:text-sm text-slate-700 dark:text-neutral-200 whitespace-pre-line leading-relaxed">
+                          {detailTask.progress_notes}
+                        </p>
+                      </div>
+                    )}
+
+                    {detailTask.blocker_notes && (
+                      <div className="p-3.5 rounded-xl bg-amber-50/60 dark:bg-amber-950/25 border border-amber-200/80 dark:border-amber-800/50 space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-amber-700 dark:text-amber-400">
+                          <HelpCircle className="w-3.5 h-3.5" />
+                          <span>Kendala &amp; Hal yang Perlu Dicari Solusinya</span>
+                        </div>
+                        <p className="text-xs sm:text-sm text-slate-700 dark:text-neutral-200 whitespace-pre-line leading-relaxed">
+                          {detailTask.blocker_notes}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {MULTI_MONTH_HORIZONS.includes(detailTask.horizon) &&

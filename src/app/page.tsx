@@ -1,11 +1,25 @@
 import { Suspense } from 'react';
 import { getActiveTasks } from './actions/tasks';
 import { getShareConfig } from './actions/share';
+import { getTodayAgentMessages, getTodayFreeStatus } from './actions/agent';
 import KanbanBoard from '@/components/KanbanBoard';
 
 async function BoardDataLoader() {
-  const [tasks, shareConfig] = await Promise.all([getActiveTasks(), getShareConfig()]);
-  return <KanbanBoard initialTasks={tasks} initialShareConfig={shareConfig} />;
+  const [tasks, shareConfig, agentMessages, isFreeDay] = await Promise.all([
+    getActiveTasks(),
+    getShareConfig(),
+    getTodayAgentMessages(),
+    getTodayFreeStatus(),
+  ]);
+
+  return (
+    <KanbanBoard
+      initialTasks={tasks}
+      initialShareConfig={shareConfig}
+      initialAgentMessages={agentMessages}
+      initialIsFreeDay={isFreeDay}
+    />
+  );
 }
 
 export default function HomePage() {

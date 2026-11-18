@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { clearVaultSession, requireVaultSession } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase';
+import { getTodayWIB } from '@/lib/agent/templates';
 import { Horizon, Task, TaskPriority, TaskStatus } from '@/types/task';
 
 async function requireAuth() {
@@ -92,6 +93,19 @@ export async function createTask(input: {
     .single();
 
   if (error) throw new Error(error.message);
+
+  // Jika tugas harian baru dibuat, otomatis batalkan status libur hari ini
+  if (input.horizon === 'daily') {
+    const { dateStr, isWeekend } = getTodayWIB();
+    if (!isWeekend && (!input.target_date || input.target_date === dateStr)) {
+      await supabaseAdmin.from('daily_checkins').upsert({
+        date: dateStr,
+        is_confirmed_free: false,
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }
+
   revalidatePath('/');
 
   return {
