@@ -21,8 +21,8 @@ export async function getActiveTasks(): Promise<Task[]> {
     .from('tasks')
     .select('*')
     .neq('status', 'archived')
-    .order('position', { ascending: false })
-    .order('created_at', { ascending: false });
+    .order('position', { ascending: true })
+    .order('created_at', { ascending: true });
 
   if (error) throw new Error(error.message);
   return ((data as Task[]) || []).map((t) => ({

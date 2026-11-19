@@ -15,6 +15,11 @@ import {
   ChevronLeft,
   ChevronDown,
   ChevronUp,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Minimize2,
+  Maximize2,
+  Filter,
   CheckCircle2,
   Circle,
   Clock,
@@ -103,6 +108,45 @@ function formatLocalYMD(d: Date): string {
 
 function getTodayDateString() {
   return formatLocalYMD(new Date());
+}
+
+function getCurrentWeekBoundsYMD(): { start: string; end: string } {
+  const now = new Date();
+  const day = now.getDay(); // 0 = Minggu, 1 = Senin, ..., 6 = Sabtu
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diffToMonday);
+
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+
+  return {
+    start: formatLocalYMD(monday),
+    end: formatLocalYMD(sunday),
+  };
+}
+
+function getTaskSortKey(task: Task): string {
+  if (task.horizon === 'daily' && task.target_date) return task.target_date;
+  if (task.horizon === 'weekly' && task.start_date) return task.start_date;
+  if (task.target_date) return task.target_date;
+  if (task.start_date) return task.start_date;
+  if (task.target_months && task.target_months.length > 0) {
+    return `${task.target_months[0]}-01`;
+  }
+  return '9999-12-31';
+}
+
+function sortTasksChronologically(list: Task[]): Task[] {
+  return [...list].sort((a, b) => {
+    const keyA = getTaskSortKey(a);
+    const keyB = getTaskSortKey(b);
+    if (keyA !== keyB) {
+      return keyA.localeCompare(keyB);
+    }
+    return (a.position || 0) - (b.position || 0);
+  });
 }
 
 function isValidStreakCompletion(task: Task): boolean {
@@ -207,6 +251,8 @@ interface SwipeableTaskCardProps {
   completedChildren: number;
   scheduleBadge: React.ReactNode;
   isDragging?: boolean;
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
   onOpenDetail: () => void;
@@ -225,6 +271,8 @@ function SwipeableTaskCard({
   completedChildren,
   scheduleBadge,
   isDragging = false,
+  isCollapsed,
+  onToggleCollapse,
   onDragStart,
   onDragEnd,
   onOpenDetail,
@@ -322,6 +370,71 @@ function SwipeableTaskCard({
   const isRightReady = offsetX >= SWIPE_THRESHOLD && canSwipeRight;
   const isLeftReady = offsetX <= -SWIPE_THRESHOLD && canSwipeLeft;
 
+  // Tampilan Compact List saat kartu diperkecil
+  if (isCollapsed) {
+    return (
+      <div
+        draggable
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onClick={handleCardClick}
+        className={`group bg-white hover:bg-slate-50/90 dark:bg-neutral-900 dark:hover:bg-neutral-800/90 border border-slate-200/90 hover:border-emerald-400/60 dark:border-neutral-800 dark:hover:border-emerald-600/50 rounded-xl px-3 py-2.5 shadow-xs transition-all duration-150 cursor-pointer flex items-center justify-between gap-2 animate-card ${
+          isDragging ? 'opacity-50 scale-[0.97]' : ''
+        }`}
+      >
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span
+            className={`w-2 h-2 rounded-full shrink-0 ${prio.dotClass}`}
+            title={`Prioritas: ${prio.label}`}
+          />
+          <span
+            className={`text-xs font-semibold truncate group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors ${
+              task.status === 'done'
+                ? 'line-through text-slate-400 dark:text-neutral-500'
+                : 'text-slate-800 dark:text-neutral-100'
+            }`}
+          >
+            {task.title}
+          </span>
+        </div>
+
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="flex items-center gap-1 shrink-0"
+        >
+          <div className="hidden sm:block text-[10px]">{scheduleBadge}</div>
+
+          {colId !== 'todo' && (
+            <button
+              onClick={onMovePrev}
+              className="p-1 hover:bg-slate-100 dark:hover:bg-neutral-700 rounded text-slate-400 hover:text-slate-800 dark:hover:text-white active:scale-90 transition-all cursor-pointer"
+              title="Geser ke kiri"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {colId !== 'done' && (
+            <button
+              onClick={onMoveNext}
+              className="p-1 hover:bg-slate-100 dark:hover:bg-neutral-700 rounded text-slate-400 hover:text-slate-800 dark:hover:text-white active:scale-90 transition-all cursor-pointer"
+              title="Geser ke kanan"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          <button
+            onClick={onToggleCollapse}
+            className="p-1 text-slate-400 hover:text-emerald-600 dark:text-neutral-500 dark:hover:text-emerald-400 rounded hover:bg-slate-100 dark:hover:bg-neutral-800 active:scale-90 transition-all cursor-pointer"
+            title="Perbesar kartu"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative rounded-xl overflow-hidden select-none md:select-auto animate-card">
       <div
@@ -407,6 +520,13 @@ function SwipeableTaskCard({
             onClick={(e) => e.stopPropagation()}
             className="flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
           >
+            <button
+              onClick={onToggleCollapse}
+              className="text-slate-400 hover:text-emerald-600 dark:text-neutral-500 dark:hover:text-emerald-400 p-1 rounded cursor-pointer active:scale-90 transition-transform"
+              title="Perkecil jadi list"
+            >
+              <Minimize2 className="w-3.5 h-3.5" />
+            </button>
             <button
               onClick={onEdit}
               className="text-slate-400 hover:text-slate-700 dark:text-neutral-500 dark:hover:text-neutral-200 p-1 rounded cursor-pointer active:scale-90 transition-transform"
@@ -521,6 +641,10 @@ export default function KanbanBoard({
   const [isDark, setIsDark] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Filter khusus To Do Minggu Ini & Collapse Card state
+  const [todoThisWeekOnly, setTodoThisWeekOnly] = useState(false);
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
+
   // Agent Drawer & Free Day Status state
   const [isAgentDrawerOpen, setIsAgentDrawerOpen] = useState(false);
   const [isFreeDay, setIsFreeDay] = useState(initialIsFreeDay);
@@ -610,6 +734,32 @@ export default function KanbanBoard({
     setIsDark(next);
     localStorage.setItem('vault_theme', next ? 'dark' : 'light');
     document.documentElement.classList.toggle('dark', next);
+  }
+
+  function toggleCollapseTask(id: string) {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function toggleCollapseColumn(columnTaskIds: string[]) {
+    if (columnTaskIds.length === 0) return;
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      const allCollapsed = columnTaskIds.every((id) => next.has(id));
+      if (allCollapsed) {
+        columnTaskIds.forEach((id) => next.delete(id));
+      } else {
+        columnTaskIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -842,8 +992,8 @@ export default function KanbanBoard({
 
     setArchivedTasks((prev) => prev.filter((t) => t.id !== task.id));
     setTasks((prev) => [
-      { ...task, status: targetStatus, position: newPosition, updated_at: isoNow },
       ...prev,
+      { ...task, status: targetStatus, position: newPosition, updated_at: isoNow },
     ]);
 
     startTransition(async () => {
@@ -959,6 +1109,8 @@ export default function KanbanBoard({
   const doneCount = horizonTasks.filter((t) => t.status === 'done').length;
   const progress =
     horizonTasks.length > 0 ? Math.round((doneCount / horizonTasks.length) * 100) : 0;
+
+  const weekBounds = useMemo(() => getCurrentWeekBoundsYMD(), []);
 
   const filteredTasks = horizonTasks.filter((t) => {
     const matchesSearch =
@@ -1137,7 +1289,8 @@ export default function KanbanBoard({
       updated_at: isoNow,
     };
 
-    setTasks((prev) => [optimisticSubtask, ...prev]);
+    // Tambahkan task baru di bagian bawah (akhir array)
+    setTasks((prev) => [...prev, optimisticSubtask]);
     if (childHorizon === 'daily') {
       setIsFreeDay(false);
     }
@@ -1237,7 +1390,8 @@ export default function KanbanBoard({
         updated_at: isoNow,
       };
 
-      setTasks((prev) => [optimisticTask, ...prev]);
+      // Tambahkan task baru di bagian bawah (akhir array)
+      setTasks((prev) => [...prev, optimisticTask]);
       if (formHorizon === 'daily') {
         setIsFreeDay(false);
       }
@@ -1656,7 +1810,7 @@ export default function KanbanBoard({
             </div>
           </div>
 
-          {/* Tengah Header: Indikator Hari Libur / Kosong (Hilang otomatis saat buat task baru) */}
+          {/* Tengah Header: Indikator Hari Libur */}
           {showFreeDayBadge && (
             <div className="hidden md:flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-sky-50/90 dark:bg-sky-950/50 border border-sky-200/80 dark:border-sky-800/60 text-sky-700 dark:text-sky-300 text-xs font-medium shadow-xs animate-card">
               <Coffee className="w-3.5 h-3.5 text-sky-500 shrink-0" />
@@ -1866,9 +2020,27 @@ export default function KanbanBoard({
 
         <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-3 flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5 items-start">
           {COLUMNS.map((col) => {
-            const columnTasks = filteredTasks.filter((t) => t.status === col.id);
+            const rawColTasks = filteredTasks.filter((t) => t.status === col.id);
+
+            // Terapkan filter Minggu Ini khusus pada kolom To Do di horizon Harian
+            const afterWeekFilter =
+              col.id === 'todo' && activeHorizon === 'daily' && todoThisWeekOnly
+                ? rawColTasks.filter(
+                    (t) =>
+                      t.target_date &&
+                      t.target_date >= weekBounds.start &&
+                      t.target_date <= weekBounds.end
+                  )
+                : rawColTasks;
+
+            // Urutkan agar tanggal terdekat di atas, dan task baru di bawah task lama
+            const columnTasks = sortTasksChronologically(afterWeekFilter);
+
             const isOver = dragOverCol === col.id;
             const hasMoreThanThree = columnTasks.length > 3;
+            const colIds = columnTasks.map((t) => t.id);
+            const allColCollapsed =
+              colIds.length > 0 && colIds.every((id) => collapsedIds.has(id));
 
             return (
               <section
@@ -1885,10 +2057,10 @@ export default function KanbanBoard({
                     : 'bg-slate-100/70 border-slate-200/80 dark:bg-neutral-900/50 dark:border-neutral-800/80'
                 }`}
               >
-                <div className="flex items-center justify-between mb-3.5 px-1 shrink-0">
-                  <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between gap-2 mb-3.5 px-1 shrink-0">
+                  <div className="flex items-center gap-2 min-w-0">
                     <span
-                      className={`w-2.5 h-2.5 rounded-full ${
+                      className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                         col.id === 'todo'
                           ? 'bg-slate-400 dark:bg-neutral-500'
                           : col.id === 'in_progress'
@@ -1896,17 +2068,56 @@ export default function KanbanBoard({
                           : 'bg-emerald-500'
                       }`}
                     />
-                    <h2 className="text-sm font-bold text-slate-800 dark:text-neutral-200">
+                    <h2 className="text-sm font-bold text-slate-800 dark:text-neutral-200 truncate">
                       {col.title}
                     </h2>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-white dark:bg-neutral-800 text-slate-600 dark:text-neutral-400 font-semibold border border-slate-200/80 dark:border-neutral-700/80">
+                      {columnTasks.length}
+                    </span>
                   </div>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-white dark:bg-neutral-800 text-slate-600 dark:text-neutral-400 font-semibold border border-slate-200/80 dark:border-neutral-700/80">
-                    {columnTasks.length}
-                  </span>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {/* Tombol Filter Minggu Ini khusus kolom To Do pada horizon Harian */}
+                    {col.id === 'todo' && activeHorizon === 'daily' && (
+                      <button
+                        type="button"
+                        onClick={() => setTodoThisWeekOnly((prev) => !prev)}
+                        title={`Fokus tugas minggu ini (${formatDateID(weekBounds.start)} s/d ${formatDateID(weekBounds.end)})`}
+                        className={`px-2 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1 transition-all active:scale-95 cursor-pointer ${
+                          todoThisWeekOnly
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                            : 'bg-white hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border-slate-200 dark:bg-neutral-800 dark:hover:bg-emerald-950/40 dark:text-neutral-300 dark:hover:text-emerald-300 dark:border-neutral-700'
+                        }`}
+                      >
+                        <Filter className="w-3 h-3" />
+                        <span>Minggu Ini</span>
+                      </button>
+                    )}
+
+                    {/* Tombol Perkecil / Perbesar Semua Kartu di Kolom */}
+                    {columnTasks.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => toggleCollapseColumn(colIds)}
+                        title={
+                          allColCollapsed
+                            ? 'Perbesar semua kartu di kolom ini'
+                            : 'Perkecil semua kartu jadi list'
+                        }
+                        className="p-1.5 rounded-lg bg-white hover:bg-slate-50 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-slate-500 hover:text-slate-800 dark:text-neutral-400 dark:hover:text-neutral-100 border border-slate-200/80 dark:border-neutral-700 transition-all active:scale-90 cursor-pointer"
+                      >
+                        {allColCollapsed ? (
+                          <ChevronsUpDown className="w-3.5 h-3.5 text-emerald-500" />
+                        ) : (
+                          <ChevronsDownUp className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div
-                  className={`space-y-3 flex-1 ${
+                  className={`space-y-2.5 flex-1 ${
                     hasMoreThanThree
                       ? 'max-h-[840px] overflow-y-auto pr-1.5 overscroll-contain'
                       : ''
@@ -1930,6 +2141,8 @@ export default function KanbanBoard({
                         completedChildren={completedChildren}
                         scheduleBadge={renderTaskScheduleBadge(task)}
                         isDragging={draggedTaskId === task.id}
+                        isCollapsed={collapsedIds.has(task.id)}
+                        onToggleCollapse={() => toggleCollapseTask(task.id)}
                         onDragStart={() => setDraggedTaskId(task.id)}
                         onDragEnd={() => {
                           setDraggedTaskId(null);
@@ -1947,7 +2160,9 @@ export default function KanbanBoard({
 
                   {columnTasks.length === 0 && (
                     <div className="h-20 md:h-28 border border-dashed border-slate-300/80 dark:border-neutral-800 rounded-xl flex items-center justify-center text-xs text-slate-400 dark:text-neutral-600 px-4 text-center">
-                      {searchQuery || priorityFilter !== 'all' ? (
+                      {col.id === 'todo' && activeHorizon === 'daily' && todoThisWeekOnly ? (
+                        'Tidak ada tugas To Do untuk minggu ini'
+                      ) : searchQuery || priorityFilter !== 'all' ? (
                         'Tidak ada tugas yang cocok dengan filter'
                       ) : (
                         <>
