@@ -88,6 +88,7 @@ export async function createTask(input: {
       start_date: input.start_date || null,
       target_date: input.target_date || null,
       target_months: input.target_months || [],
+      completed_at: null,
     })
     .select('*')
     .single();
@@ -170,12 +171,15 @@ export async function moveTask(
 ) {
   await requireAuth();
 
+  const nowIso = new Date().toISOString();
+
   const { error } = await supabaseAdmin
     .from('tasks')
     .update({
       status,
       position,
-      updated_at: new Date().toISOString(),
+      completed_at: status === 'done' ? nowIso : null,
+      updated_at: nowIso,
     })
     .eq('id', id);
 
@@ -195,6 +199,7 @@ export async function deleteTask(id: string) {
 export async function archiveCompletedInHorizon(horizon: Horizon) {
   await requireAuth();
 
+  // Kolom completed_at sengaja tidak diubah agar riwayat streak tetap terjaga
   const { error } = await supabaseAdmin
     .from('tasks')
     .update({
@@ -214,13 +219,25 @@ export async function restoreArchivedTask(
 ) {
   await requireAuth();
 
+  const updatePayload: {
+    status: Exclude<TaskStatus, 'archived'>;
+    position: number;
+    updated_at: string;
+    completed_at?: null;
+  } = {
+    status: targetStatus,
+    position: Date.now(),
+    updated_at: new Date().toISOString(),
+  };
+
+  // Jika dipulihkan ke kolom selain 'done' (misalnya 'todo'), hapus tanda selesai
+  if (targetStatus !== 'done') {
+    updatePayload.completed_at = null;
+  }
+
   const { error } = await supabaseAdmin
     .from('tasks')
-    .update({
-      status: targetStatus,
-      position: Date.now(),
-      updated_at: new Date().toISOString(),
-    })
+    .update(updatePayload)
     .eq('id', id);
 
   if (error) throw new Error(error.message);

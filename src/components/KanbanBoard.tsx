@@ -150,16 +150,17 @@ function sortTasksChronologically(list: Task[]): Task[] {
 }
 
 function isValidStreakCompletion(task: Task): boolean {
+  const completionTimestamp = task.completed_at || task.updated_at;
   if (
     task.horizon !== 'daily' ||
     (task.status !== 'done' && task.status !== 'archived') ||
     !task.target_date ||
-    !task.updated_at
+    !completionTimestamp
   ) {
     return false;
   }
 
-  const completedLocalYMD = formatLocalYMD(new Date(task.updated_at));
+  const completedLocalYMD = formatLocalYMD(new Date(completionTimestamp));
   return completedLocalYMD === task.target_date;
 }
 
@@ -990,10 +991,20 @@ export default function KanbanBoard({
     const newPosition = getNowTimestamp();
     const isoNow = new Date(newPosition).toISOString();
 
+    // Pertahankan completed_at asli jika dipulihkan kembali ke 'done'
+    const restoredCompletedAt =
+      targetStatus === 'done' ? task.completed_at || task.updated_at : null;
+
     setArchivedTasks((prev) => prev.filter((t) => t.id !== task.id));
     setTasks((prev) => [
       ...prev,
-      { ...task, status: targetStatus, position: newPosition, updated_at: isoNow },
+      {
+        ...task,
+        status: targetStatus,
+        position: newPosition,
+        completed_at: restoredCompletedAt,
+        updated_at: isoNow,
+      },
     ]);
 
     startTransition(async () => {
@@ -1146,7 +1157,13 @@ export default function KanbanBoard({
     setTasks((prev) =>
       prev.map((t) =>
         t.id === draggedTaskId
-          ? { ...t, status: targetStatus, position: newPosition, updated_at: isoNow }
+          ? {
+              ...t,
+              status: targetStatus,
+              position: newPosition,
+              completed_at: targetStatus === 'done' ? isoNow : null,
+              updated_at: isoNow,
+            }
           : t
       )
     );
@@ -1172,7 +1189,13 @@ export default function KanbanBoard({
     setTasks((prev) =>
       prev.map((t) =>
         t.id === task.id
-          ? { ...t, status: targetStatus, position: newPosition, updated_at: isoNow }
+          ? {
+              ...t,
+              status: targetStatus,
+              position: newPosition,
+              completed_at: targetStatus === 'done' ? isoNow : null,
+              updated_at: isoNow,
+            }
           : t
       )
     );
@@ -1192,7 +1215,13 @@ export default function KanbanBoard({
     setTasks((prev) =>
       prev.map((t) =>
         t.id === subtask.id
-          ? { ...t, status: nextStatus, position: newPosition, updated_at: isoNow }
+          ? {
+              ...t,
+              status: nextStatus,
+              position: newPosition,
+              completed_at: nextStatus === 'done' ? isoNow : null,
+              updated_at: isoNow,
+            }
           : t
       )
     );
@@ -1285,6 +1314,7 @@ export default function KanbanBoard({
       target_months: cleanMonths,
       progress_notes: null,
       blocker_notes: null,
+      completed_at: null,
       created_at: isoNow,
       updated_at: isoNow,
     };
@@ -1386,6 +1416,7 @@ export default function KanbanBoard({
         target_months: cleanTargetMonths,
         progress_notes: null,
         blocker_notes: null,
+        completed_at: null,
         created_at: isoNow,
         updated_at: isoNow,
       };
@@ -1420,9 +1451,16 @@ export default function KanbanBoard({
   function handleArchiveDone() {
     if (doneCount === 0) return;
     const isoNow = new Date().toISOString();
+
+    // Pertahankan completed_at asli setiap kartu saat dipindahkan ke arsip
     const toArchive = tasks
       .filter((t) => t.horizon === activeHorizon && t.status === 'done')
-      .map((t) => ({ ...t, status: 'archived' as const, updated_at: isoNow }));
+      .map((t) => ({
+        ...t,
+        status: 'archived' as const,
+        completed_at: t.completed_at || t.updated_at,
+        updated_at: isoNow,
+      }));
 
     setTasks((prev) => prev.filter((t) => !(t.horizon === activeHorizon && t.status === 'done')));
     setArchivedTasks((prev) => [...toArchive, ...prev]);

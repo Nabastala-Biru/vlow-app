@@ -16,6 +16,7 @@ export interface Task {
   target_months: string[];
   progress_notes?: string | null;
   blocker_notes?: string | null;
+  completed_at?: string | null;
   created_at: string;
   updated_at: string;
 }
